@@ -52,6 +52,16 @@ def on_startup():
     init_db()
 
 
+@app.get("/")
+def root():
+    return {
+        "message": "PERT backend is running",
+        "health": "/health",
+        "projects": "/api/projects",
+        "tasks": "/api/tasks/{project_id}",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
