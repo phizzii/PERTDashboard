@@ -16,138 +16,255 @@ export default function SignInPage({ onSignIn }: SignInPageProps) {
     onSignIn(email.trim());
   };
 
+  const avatarInitial = email.trim().charAt(0).toUpperCase() || "P";
+
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
-      style={{ backgroundColor: "#F8F9FA", fontFamily: "'Inter', sans-serif" }}
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        padding: "40px 16px",
+        backgroundColor: "#F7F8FB",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "Inter, system-ui, sans-serif",
+      }}
     >
       <div
-        className="absolute top-0 left-0 w-full h-full pointer-events-none"
-        aria-hidden="true"
-      >
-        <div
-          className="absolute -top-32 -left-32 w-96 h-96 rounded-full opacity-40"
-          style={{ background: "radial-gradient(circle, #e8ecf4 0%, transparent 70%)" }}
-        />
-        <div
-          className="absolute -bottom-24 -right-24 w-80 h-80 rounded-full opacity-30"
-          style={{ background: "radial-gradient(circle, #dce3ef 0%, transparent 70%)" }}
-        />
-      </div>
-
-      <div
-        className="relative w-full max-w-md bg-white flex flex-col items-center"
         style={{
-          borderRadius: "16px",
-          boxShadow: "0 4px 6px -1px rgba(27,42,74,0.06), 0 20px 60px -8px rgba(27,42,74,0.14), 0 0 0 1px rgba(27,42,74,0.04)",
-          padding: "48px 40px 36px",
+          width: "100%",
+          maxWidth: "420px",
+          backgroundColor: "#ffffff",
+          borderRadius: "24px",
+          boxShadow: "0 20px 60px rgba(15, 23, 42, 0.12)",
+          padding: "48px 40px",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
-        <div
-          className="flex items-center justify-center mb-6 transition-transform duration-300 hover:scale-105"
-          style={{
-            width: 72,
-            height: 72,
-            borderRadius: "50%",
-            background: "linear-gradient(135deg, #1B2A4A 0%, #2d4278 100%)",
-            boxShadow: "0 8px 24px rgba(27,42,74,0.28)",
-          }}
-        >
-          <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-            <path d="M6 26 L16 6 L26 26" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M9.5 20 L22.5 20" stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-            <circle cx="16" cy="6" r="2" fill="white" />
-          </svg>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+          <div
+            style={{
+              width: "72px",
+              height: "72px",
+              borderRadius: "9999px",
+              backgroundColor: "#243B78",
+              boxShadow: "0 8px 20px rgba(36, 59, 120, 0.25)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#ffffff",
+              fontSize: "24px",
+              fontWeight: 700,
+            }}
+          >
+            {avatarInitial}
+          </div>
         </div>
 
-        <h1 className="text-center font-semibold mb-1" style={{ fontSize: "26px", color: "#1B2A4A", letterSpacing: "-0.3px" }}>
+        <h1
+          style={{
+            textAlign: "center",
+            fontSize: "34px",
+            margin: "0 0 10px",
+            fontWeight: 700,
+            color: "#243B78",
+            lineHeight: 1.05,
+          }}
+        >
           Welcome Back
         </h1>
-        <p className="text-center mb-8" style={{ fontSize: "14px", color: "#636e72", lineHeight: 1.5 }}>
+        <p style={{ textAlign: "center", fontSize: "14px", margin: "0 0 32px", color: "#6B7280", lineHeight: 1.6 }}>
           Sign in to manage your PERT projects
         </p>
 
-        <form className="w-full flex flex-col gap-4" onSubmit={handleSubmit}>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="email" className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#2D3436" }}>
+        <form style={{ display: "grid", gap: "24px" }} onSubmit={handleSubmit}>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <label
+              htmlFor="email"
+              style={{
+                textTransform: "uppercase",
+                fontSize: "11px",
+                letterSpacing: "0.24em",
+                fontWeight: 700,
+                color: "#475569",
+              }}
+            >
               Email
             </label>
-            <div className="relative group">
-              <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "#b2bec3" }} />
+            <div style={{ position: "relative" }}>
+              <Mail
+                style={{
+                  position: "absolute",
+                  left: "16px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "#9CA3AF",
+                  width: "18px",
+                  height: "18px",
+                }}
+              />
               <input
                 id="email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@company.com"
-                className="w-full pl-10 pr-4 py-3 rounded-xl text-sm outline-none transition-all duration-200"
-                style={{ border: "1.5px solid #e0e4ed", color: "#2D3436", background: "#fafbfc" }}
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  padding: "0 16px 0 44px",
+                  borderRadius: "12px",
+                  border: "1.5px solid #E5E7EB",
+                  backgroundColor: "#ffffff",
+                  color: "#111827",
+                  fontSize: "14px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
               />
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="password" className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#2D3436" }}>
+          <div style={{ display: "grid", gap: "8px" }}>
+            <label
+              htmlFor="password"
+              style={{
+                textTransform: "uppercase",
+                fontSize: "11px",
+                letterSpacing: "0.24em",
+                fontWeight: 700,
+                color: "#475569",
+              }}
+            >
               Password
             </label>
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "#b2bec3" }} />
+            <div style={{ position: "relative" }}>
+              <Lock
+                style={{
+                  position: "absolute",
+                  left: "16px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "#9CA3AF",
+                  width: "18px",
+                  height: "18px",
+                }}
+              />
               <input
                 id="password"
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="••••••••"
-                className="w-full pl-10 pr-10 py-3 rounded-xl text-sm outline-none transition-all duration-200"
-                style={{ border: "1.5px solid #e0e4ed", color: "#2D3436", background: "#fafbfc" }}
+                style={{
+                  width: "100%",
+                  height: "48px",
+                  padding: "0 44px 0 44px",
+                  borderRadius: "12px",
+                  border: "1.5px solid #E5E7EB",
+                  backgroundColor: "#ffffff",
+                  color: "#111827",
+                  fontSize: "14px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 transition-opacity duration-150 hover:opacity-70"
-                style={{ color: "#b2bec3", background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                style={{
+                  position: "absolute",
+                  right: "16px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  border: "none",
+                  background: "transparent",
+                  padding: 0,
+                  color: "#9CA3AF",
+                  cursor: "pointer",
+                }}
                 tabIndex={-1}
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {showPassword ? <EyeOff style={{ width: "20px", height: "20px" }} /> : <Eye style={{ width: "20px", height: "20px" }} />}
               </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-between mt-1">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" className="w-4 h-4 rounded" style={{ accentColor: "#1B2A4A" }} />
-              <span className="text-sm" style={{ color: "#636e72" }}>Remember me</span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "10px", color: "#6B7280", fontSize: "14px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                style={{
+                  width: "16px",
+                  height: "16px",
+                  borderRadius: "4px",
+                  border: "1px solid #D1D5DB",
+                  accentColor: "#243B78",
+                }}
+              />
+              Remember me
             </label>
-            <button type="button" className="text-sm font-medium" style={{ color: "#1B2A4A" }}>
+            <button
+              type="button"
+              style={{
+                border: "none",
+                background: "transparent",
+                color: "#243B78",
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
               Forgot password?
             </button>
           </div>
 
           <button
             type="submit"
-            className="w-full py-3 rounded-xl text-sm font-semibold text-white mt-2 transition-all duration-200"
-            style={{ background: "linear-gradient(135deg, #1B2A4A 0%, #2d4278 100%)", boxShadow: "0 4px 14px rgba(27,42,74,0.3)", letterSpacing: "0.2px" }}
+            style={{
+              width: "100%",
+              height: "48px",
+              borderRadius: "12px",
+              border: "none",
+              backgroundColor: "#243B78",
+              color: "#ffffff",
+              fontSize: "14px",
+              fontWeight: 700,
+              cursor: "pointer",
+              boxShadow: "0 10px 24px rgba(36, 59, 120, 0.22)",
+            }}
           >
             Sign In
           </button>
 
-          <div className="flex items-center gap-3 my-1">
-            <div className="flex-1 h-px" style={{ background: "#e8ecf4" }} />
-            <span className="text-xs" style={{ color: "#b2bec3" }}>or</span>
-            <div className="flex-1 h-px" style={{ background: "#e8ecf4" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", color: "#6B7280", fontSize: "14px" }}>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "#E5E7EB" }} />
+            <span>or</span>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "#E5E7EB" }} />
           </div>
 
           <button
             type="button"
-            className="w-full py-3 rounded-xl text-sm font-semibold transition-all duration-200"
-            style={{ border: "1.5px solid #1B2A4A", color: "#1B2A4A", background: "transparent" }}
+            style={{
+              width: "100%",
+              height: "48px",
+              borderRadius: "12px",
+              border: "1.5px solid #243B78",
+              backgroundColor: "#ffffff",
+              color: "#243B78",
+              fontSize: "14px",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
             onClick={() => alert("Register flow is not wired yet.")}
           >
             Register
           </button>
         </form>
 
-        <p className="mt-8 text-center" style={{ fontSize: "12px", color: "#b2bec3" }}>
+        <p style={{ marginTop: "32px", textAlign: "center", fontSize: "12px", color: "#9CA3AF" }}>
           PERT Optimiser © 2026
         </p>
       </div>
