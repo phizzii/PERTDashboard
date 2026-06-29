@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { RouterProvider } from "react-router";
+import { router } from "./routes";
 import { DashboardFilters, FilterState } from "./components/DashboardFilters";
 import { SalesTrendChart } from "./components/SalesTrendChart";
 import { RevenueBreakdownChart } from "./components/RevenueBreakdownChart";
@@ -77,6 +79,8 @@ export default function App() {
   };
 
   const [showPassword, setShowPassword] = useState(false);
+
+  return <RouterProvider router={router} />;
 
   return (
     <div
