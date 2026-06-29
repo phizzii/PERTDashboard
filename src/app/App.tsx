@@ -18,31 +18,29 @@ const supabase = createClient(
   publicAnonKey,
 );
 
-const KV_TABLE = "kv_store_10a8e56d";
+const BACKEND = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
 async function kvGet(key: string): Promise<any> {
-  const { data, error } = await supabase
-    .from(KV_TABLE)
-    .select("value")
-    .eq("key", key)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  return data?.value ?? null;
+  const res = await fetch(`${BACKEND}/api/kv/${encodeURIComponent(key)}`);
+  if (!res.ok) {
+    throw new Error(`KV GET failed: ${res.statusText}`);
+  }
+  // backend returns JSON or null
+  return await res.json();
 }
 
 async function kvSet(key: string, value: any): Promise<void> {
-  const { error } = await supabase
-    .from(KV_TABLE)
-    .upsert({ key, value });
-  if (error) throw new Error(error.message);
+  const res = await fetch(`${BACKEND}/api/kv/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  });
+  if (!res.ok) throw new Error(`KV SET failed: ${res.statusText}`);
 }
 
 async function kvDel(key: string): Promise<void> {
-  const { error } = await supabase
-    .from(KV_TABLE)
-    .delete()
-    .eq("key", key);
-  if (error) throw new Error(error.message);
+  const res = await fetch(`${BACKEND}/api/kv/${encodeURIComponent(key)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`KV DEL failed: ${res.statusText}`);
 }
 
 // ── PERT formula (runs client-side — pure math) ──────────────────────────────

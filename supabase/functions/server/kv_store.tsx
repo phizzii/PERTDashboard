@@ -10,78 +10,124 @@ CREATE TABLE kv_store_10a8e56d (
 // View at https://supabase.com/dashboard/project/ivplnvhynuvclbmdsxth/database/tables
 
 // This file provides a simple key-value interface for storing Figma Make data. It should be adequate for most small-scale use cases.
-import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
+import { createClient } from "npm:@supabase/supabase-js";
+import { ensureDir } from "https://deno.land/std@0.203.0/fs/mod.ts";
 
-const client = () => createClient(
-  Deno.env.get("SUPABASE_URL"),
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
-);
+const KV_TABLE = "kv_store_10a8e56d";
+const LOCAL_KV_PATH = new URL("./local_kv.json", import.meta.url).pathname;
 
-// Set stores a key-value pair in the database.
+function hasSupabaseEnv() {
+  return !!(Deno.env.get("SUPABASE_URL") && Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+}
+
+function supabaseClient() {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  return createClient(url, key);
+}
+
+async function readLocalStore(): Promise<Record<string, any>> {
+  try {
+    const text = await Deno.readTextFile(LOCAL_KV_PATH);
+    return JSON.parse(text || "{}");
+  } catch (err) {
+    // If file missing, create an empty store
+    await ensureDir(new URL("./", import.meta.url));
+    await Deno.writeTextFile(LOCAL_KV_PATH, "{}");
+    return {};
+  }
+}
+
+async function writeLocalStore(store: Record<string, any>) {
+  await Deno.writeTextFile(LOCAL_KV_PATH, JSON.stringify(store, null, 2));
+}
+
+// Set stores a key-value pair in the database or local fallback.
 export const set = async (key: string, value: any): Promise<void> => {
-  const supabase = client()
-  const { error } = await supabase.from("kv_store_10a8e56d").upsert({
-    key,
-    value
-  });
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { error } = await supabase.from(KV_TABLE).upsert({ key, value });
+    if (error) throw new Error(error.message);
+    return;
   }
+  const store = await readLocalStore();
+  store[key] = value;
+  await writeLocalStore(store);
 };
 
-// Get retrieves a key-value pair from the database.
+// Get retrieves a key-value pair from the database or local fallback.
 export const get = async (key: string): Promise<any> => {
-  const supabase = client()
-  const { data, error } = await supabase.from("kv_store_10a8e56d").select("value").eq("key", key).maybeSingle();
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { data, error } = await supabase.from(KV_TABLE).select("value").eq("key", key).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data?.value ?? null;
   }
-  return data?.value;
+  const store = await readLocalStore();
+  return store[key] ?? null;
 };
 
-// Delete deletes a key-value pair from the database.
+// Delete deletes a key-value pair from the database or local fallback.
 export const del = async (key: string): Promise<void> => {
-  const supabase = client()
-  const { error } = await supabase.from("kv_store_10a8e56d").delete().eq("key", key);
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { error } = await supabase.from(KV_TABLE).delete().eq("key", key);
+    if (error) throw new Error(error.message);
+    return;
   }
+  const store = await readLocalStore();
+  delete store[key];
+  await writeLocalStore(store);
 };
 
-// Sets multiple key-value pairs in the database.
+// Sets multiple key-value pairs in the database or local fallback.
 export const mset = async (keys: string[], values: any[]): Promise<void> => {
-  const supabase = client()
-  const { error } = await supabase.from("kv_store_10a8e56d").upsert(keys.map((k, i) => ({ key: k, value: values[i] })));
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { error } = await supabase.from(KV_TABLE).upsert(keys.map((k, i) => ({ key: k, value: values[i] })));
+    if (error) throw new Error(error.message);
+    return;
   }
+  const store = await readLocalStore();
+  keys.forEach((k, i) => { store[k] = values[i]; });
+  await writeLocalStore(store);
 };
 
-// Gets multiple key-value pairs from the database.
+// Gets multiple key-value pairs from the database or local fallback.
 export const mget = async (keys: string[]): Promise<any[]> => {
-  const supabase = client()
-  const { data, error } = await supabase.from("kv_store_10a8e56d").select("value").in("key", keys);
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { data, error } = await supabase.from(KV_TABLE).select("value").in("key", keys);
+    if (error) throw new Error(error.message);
+    return data?.map((d: any) => d.value) ?? [];
   }
-  return data?.map((d) => d.value) ?? [];
+  const store = await readLocalStore();
+  return keys.map((k) => store[k] ?? null);
 };
 
-// Deletes multiple key-value pairs from the database.
+// Deletes multiple key-value pairs from the database or local fallback.
 export const mdel = async (keys: string[]): Promise<void> => {
-  const supabase = client()
-  const { error } = await supabase.from("kv_store_10a8e56d").delete().in("key", keys);
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { error } = await supabase.from(KV_TABLE).delete().in("key", keys);
+    if (error) throw new Error(error.message);
+    return;
   }
+  const store = await readLocalStore();
+  keys.forEach((k) => delete store[k]);
+  await writeLocalStore(store);
 };
 
 // Search for key-value pairs by prefix.
 export const getByPrefix = async (prefix: string): Promise<any[]> => {
-  const supabase = client()
-  const { data, error } = await supabase.from("kv_store_10a8e56d").select("key, value").like("key", prefix + "%");
-  if (error) {
-    throw new Error(error.message);
+  if (hasSupabaseEnv()) {
+    const supabase = supabaseClient();
+    const { data, error } = await supabase.from(KV_TABLE).select("key, value").like("key", prefix + "%");
+    if (error) throw new Error(error.message);
+    return data?.map((d: any) => d.value) ?? [];
   }
-  return data?.map((d) => d.value) ?? [];
+  const store = await readLocalStore();
+  return Object.keys(store)
+    .filter((k) => k.startsWith(prefix))
+    .map((k) => store[k]);
 };
