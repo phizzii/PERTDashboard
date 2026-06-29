@@ -1,4 +1,5 @@
 from typing import Any, List
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
@@ -23,9 +24,16 @@ def init_db():
     """)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT,
+      start_date TEXT, end_date TEXT
     );
     """)
+    cur.execute("PRAGMA table_info(projects)")
+    project_columns = {row[1] for row in cur.fetchall()}
+    if "start_date" not in project_columns:
+        cur.execute("ALTER TABLE projects ADD COLUMN start_date TEXT")
+    if "end_date" not in project_columns:
+        cur.execute("ALTER TABLE projects ADD COLUMN end_date TEXT")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -110,7 +118,7 @@ def delete_kv(key: str):
 def list_projects():
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM projects ORDER BY created_at DESC")
+    cur.execute("SELECT id, name, description, created_at AS createdAt, start_date AS startDate, end_date AS endDate FROM projects ORDER BY created_at DESC")
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -122,14 +130,16 @@ def create_project(payload: dict):
     if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Name required")
     pid = str(uuid4())
-    created_at = __import__("datetime").datetime.utcnow().isoformat()
+    created_at = datetime.utcnow().isoformat()
+    start_date = payload.get("startDate") or payload.get("start_date")
+    end_date = payload.get("endDate") or payload.get("end_date")
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO projects (id, name, description, created_at) VALUES (?, ?, ?, ?)",
-                (pid, name.strip(), payload.get("description", ""), created_at))
+    cur.execute("INSERT INTO projects (id, name, description, created_at, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
+                (pid, name.strip(), payload.get("description", ""), created_at, start_date, end_date))
     conn.commit()
     conn.close()
-    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at}
+    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at, "startDate": start_date, "endDate": end_date}
 
 
 @app.delete("/api/projects/{project_id}")

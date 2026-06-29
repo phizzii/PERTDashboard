@@ -18,7 +18,7 @@ const SAMPLE_PROJECTS = [
     id: "1",
     name: "Platform Redesign",
     description: "Full redesign of the customer-facing platform with new PERT estimates.",
-    status: "Active",
+    status: "In progress",
     priority: "High",
     progress: 68,
     completionDate: "2026-08-14",
@@ -27,7 +27,7 @@ const SAMPLE_PROJECTS = [
     id: "2",
     name: "API Migration",
     description: "Migrating legacy REST endpoints to GraphQL with updated timelines.",
-    status: "Active",
+    status: "In progress",
     priority: "High",
     progress: 42,
     completionDate: "2026-09-01",
@@ -36,7 +36,7 @@ const SAMPLE_PROJECTS = [
     id: "3",
     name: "Internal Tooling",
     description: "Low-priority tooling improvements for the engineering team.",
-    status: "Ongoing",
+    status: "Not started",
     priority: "Low",
     progress: 25,
     completionDate: "2026-10-30",
@@ -45,7 +45,7 @@ const SAMPLE_PROJECTS = [
     id: "4",
     name: "Marketing Site Refresh",
     description: "Copy and visual updates to public marketing pages.",
-    status: "Ongoing",
+    status: "Not started",
     priority: "Low",
     progress: 55,
     completionDate: "2026-11-15",
@@ -54,7 +54,7 @@ const SAMPLE_PROJECTS = [
     id: "5",
     name: "Q1 Reporting Dashboard",
     description: "Quarterly analytics dashboard — shipped and signed off.",
-    status: "Completed",
+    status: "Finished",
     priority: "High",
     progress: 100,
     completionDate: "2026-03-31",
@@ -67,8 +67,8 @@ type Project = (typeof SAMPLE_PROJECTS)[number];
 const sortProjects = (projects: Project[]) =>
   [...projects].sort((a, b) => {
     const rank = (p: Project) => {
-      if (p.status === "Active") return 0;
-      if (p.status === "Ongoing") return 1;
+      if (p.status === "In progress") return 0;
+      if (p.status === "Not started") return 1;
       return 2;
     };
     return rank(a) - rank(b);
@@ -77,32 +77,32 @@ const sortProjects = (projects: Project[]) =>
 // ── Card tint config ─────────────────────────────────────────────────────────
 
 function cardStyle(status: string): React.CSSProperties {
-  if (status === "Active") return { background: "#2a9d8f", color: "#fff" };
-  if (status === "Ongoing") return { background: "#e9c46a", color: "#2d3436" };
+  if (status === "In progress") return { background: "#2a9d8f", color: "#fff" };
+  if (status === "Not started") return { background: "#e9c46a", color: "#2d3436" };
   return { background: "#1b2a4a", color: "#fff" };
 }
 
 function badgeBg(status: string, type: "status" | "priority") {
   if (type === "status") {
-    if (status === "Active") return "rgba(255,255,255,0.25)";
-    if (status === "Ongoing") return "rgba(0,0,0,0.12)";
+    if (status === "In progress") return "rgba(255,255,255,0.25)";
+    if (status === "Not started") return "rgba(0,0,0,0.12)";
     return "rgba(255,255,255,0.15)";
   }
   return "rgba(255,255,255,0.18)";
 }
 
 function progressTrack(status: string) {
-  if (status === "Active") return "rgba(255,255,255,0.25)";
-  if (status === "Ongoing") return "rgba(0,0,0,0.15)";
+  if (status === "In progress") return "rgba(255,255,255,0.25)";
+  if (status === "Not started") return "rgba(0,0,0,0.15)";
   return "rgba(255,255,255,0.15)";
 }
 function progressFill(status: string) {
-  if (status === "Active") return "#fff";
-  if (status === "Ongoing") return "#2d3436";
+  if (status === "In progress") return "#fff";
+  if (status === "Not started") return "#2d3436";
   return "#2a9d8f";
 }
 function subTextColor(status: string) {
-  if (status === "Ongoing") return "#636e72";
+  if (status === "Not started") return "#636e72";
   return "rgba(255,255,255,0.72)";
 }
 
@@ -133,7 +133,7 @@ export default function Landing({ onGetStarted }: LandingProps) {
 
   return (
     <div
-      className="min-h-screen flex flex-col"
+      className="h-screen min-h-screen flex flex-col overflow-hidden"
       style={{ background: "#F4F6F9", fontFamily: "'Inter', sans-serif", color: "#2d3436" }}
     >
       {/* ── Drawer overlay ── */}
@@ -264,7 +264,7 @@ export default function Landing({ onGetStarted }: LandingProps) {
       </header>
 
       {/* ── Main content ── */}
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 flex flex-col gap-4">
+      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 flex flex-col gap-4 overflow-auto">
         {/* Heading */}
         <div className="mb-2">
           <h1

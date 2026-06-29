@@ -26,6 +26,8 @@ export interface Project {
   name: string;
   description: string;
   createdAt: string;
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 export interface Task {
@@ -77,13 +79,19 @@ export async function healthCheck() {
 }
 
 export async function listProjects() {
-  return apiFetch<Project[]>("/api/projects");
+  const projects = await apiFetch<Array<Project & { created_at?: string; start_date?: string | null; end_date?: string | null }>>("/api/projects");
+  return projects.map((project) => ({
+    ...project,
+    createdAt: project.createdAt ?? project.created_at ?? "",
+    startDate: project.startDate ?? project.start_date ?? null,
+    endDate: project.endDate ?? project.end_date ?? null,
+  }));
 }
 
-export async function createProject(name: string) {
+export async function createProject(name: string, options?: { startDate?: string | null; endDate?: string | null }) {
   return apiFetch<Project>("/api/projects", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, startDate: options?.startDate ?? null, endDate: options?.endDate ?? null }),
   });
 }
 

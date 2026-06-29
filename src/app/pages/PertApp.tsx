@@ -171,6 +171,80 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
   );
 }
 
+function formatDateLabel(value?: string | null) {
+  if (!value) return "Not set";
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return "Not set";
+  return parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function addDays(dateValue: string, days: number) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getProjectTimeline(project: Project | null, tasks: Task[]) {
+  if (!project) {
+    return {
+      status: "Not started" as const,
+      plannedDays: null as number | null,
+      estimatedDays: 0,
+      warning: null as string | null,
+      suggestedEndDate: null as string | null,
+      deadlineExceeded: false,
+    };
+  }
+
+  if (tasks.length === 0) {
+    return {
+      status: "Not started" as const,
+      plannedDays: null as number | null,
+      estimatedDays: 0,
+      warning: null as string | null,
+      suggestedEndDate: null as string | null,
+      deadlineExceeded: false,
+    };
+  }
+
+  const estimatedDays = Math.max(1, Math.ceil(tasks.reduce((sum, task) => sum + task.expected, 0)));
+  const startDate = project.startDate;
+  const endDate = project.endDate;
+
+  let plannedDays: number | null = null;
+  if (startDate && endDate) {
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${endDate}T00:00:00`);
+    plannedDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+  }
+
+  const deadlineExceeded = plannedDays !== null && estimatedDays > plannedDays;
+  const status: "Not started" | "In progress" | "Finished" = deadlineExceeded ? "Finished" : "In progress";
+  const warning = deadlineExceeded && startDate
+    ? `Estimated work is ${estimatedDays} days, which is longer than the planned ${plannedDays}-day window. A better end date would be ${formatDateLabel(addDays(startDate, estimatedDays))}.`
+    : null;
+  const suggestedEndDate = deadlineExceeded && startDate ? addDays(startDate, estimatedDays) : null;
+
+  return {
+    status,
+    plannedDays,
+    estimatedDays,
+    warning,
+    suggestedEndDate,
+    deadlineExceeded,
+  };
+}
+
+function statusClasses(status: "Not started" | "In progress" | "Finished") {
+  if (status === "Not started") {
+    return "bg-slate-100 text-slate-700";
+  }
+  if (status === "In progress") {
+    return "bg-emerald-100 text-emerald-700";
+  }
+  return "bg-rose-100 text-rose-700";
+}
+
 export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -178,6 +252,8 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectStartDate, setNewProjectStartDate] = useState("");
+  const [newProjectEndDate, setNewProjectEndDate] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
 
   useEffect(() => {
@@ -227,21 +303,31 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     return {
       totalE: Math.round(totalE * 100) / 100,
       totalSigma: Math.round(totalSigma * 100) / 100,
-      p90: Math.round((totalE + 1.28 * totalSigma) * 100) / 100,
-      high3sigma: Math.round((totalE + 3 * totalSigma) * 100) / 100,
     };
   }, [tasks]);
+
+  const projectTimeline = useMemo(() => getProjectTimeline(selectedProject, tasks), [selectedProject, tasks]);
 
   const handleAddProject = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newProjectName.trim()) return;
+    if (newProjectStartDate && newProjectEndDate && newProjectStartDate > newProjectEndDate) {
+      toast.error("End date must be on or after the start date");
+      return;
+    }
+
     setCreatingProject(true);
     try {
-      const project = await createProject(newProjectName.trim());
+      const project = await createProject(newProjectName.trim(), {
+        startDate: newProjectStartDate || null,
+        endDate: newProjectEndDate || null,
+      });
       const updated = [project, ...projects];
       setProjects(updated);
       setSelectedProjectId(project.id);
       setNewProjectName("");
+      setNewProjectStartDate("");
+      setNewProjectEndDate("");
       toast.success("Project created");
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to create project");
@@ -284,7 +370,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">PERT Calculator</p>
             <h1 className="mt-2 text-3xl font-semibold text-slate-900">Project risk and duration estimates</h1>
-            <p className="mt-2 text-sm text-slate-600">Create projects, add task estimates, and see P90 and variance calculations.</p>
+            <p className="mt-2 text-sm text-slate-600">Create projects, add task estimates, and review timeline health with dates and deadline guidance.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700">
@@ -314,17 +400,31 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
               </div>
               <form className="mt-5 space-y-3" onSubmit={handleAddProject}>
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">New project</label>
-                <div className="flex gap-3">
+                <div className="space-y-2">
                   <input
                     value={newProjectName}
                     onChange={(event) => setNewProjectName(event.target.value)}
                     placeholder="Project name"
-                    className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
                   />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      type="date"
+                      value={newProjectStartDate}
+                      onChange={(event) => setNewProjectStartDate(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    />
+                    <input
+                      type="date"
+                      value={newProjectEndDate}
+                      onChange={(event) => setNewProjectEndDate(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    />
+                  </div>
                   <button
                     type="submit"
                     disabled={!newProjectName.trim() || creatingProject}
-                    className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Add
                   </button>
@@ -348,7 +448,16 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                         className="text-left"
                       >
                         <p className="font-semibold text-slate-900">{project.name}</p>
-                        <p className="text-xs text-slate-500">{new Date(project.createdAt).toLocaleDateString()}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusClasses(getProjectTimeline(project, []).status)}`}>
+                            {getProjectTimeline(project, []).status}
+                          </span>
+                          {(project.startDate || project.endDate) && (
+                            <span className="text-[11px] text-slate-500">
+                              {project.startDate ? formatDateLabel(project.startDate) : "No start date"} → {project.endDate ? formatDateLabel(project.endDate) : "No end date"}
+                            </span>
+                          )}
+                        </div>
                       </button>
                       <button
                         type="button"
@@ -382,6 +491,16 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                   <h2 className="mt-2 text-xl font-semibold text-slate-900">
                     {selectedProject ? selectedProject.name : "Choose or create a project"}
                   </h2>
+                  {selectedProject && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${statusClasses(projectTimeline.status)}`}>
+                        {projectTimeline.status}
+                      </span>
+                      <span className="text-sm text-slate-500">
+                        {selectedProject.startDate ? formatDateLabel(selectedProject.startDate) : "No start date"} → {selectedProject.endDate ? formatDateLabel(selectedProject.endDate) : "No end date"}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-3xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
                   {tasks.length} task{tasks.length === 1 ? "" : "s"}
@@ -401,8 +520,8 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                     <p className="mt-3 text-3xl font-semibold text-slate-900">{stats.totalSigma}</p>
                   </div>
                   <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500">P90</p>
-                    <p className="mt-3 text-3xl font-semibold text-slate-900">{stats.p90}</p>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Timeline</p>
+                    <p className="mt-3 text-3xl font-semibold text-slate-900">{projectTimeline.status}</p>
                   </div>
                 </div>
 
@@ -410,13 +529,20 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                   <div className="space-y-6">
                     <TaskForm projectId={selectedProject.id} onAdded={handleTaskAdded} />
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                      <div className="flex items-center gap-3 text-slate-900">
+                      <div className="flex items-start gap-3 text-slate-900">
                         <div className="rounded-2xl bg-slate-900 p-3 text-white">
                           <BarChart3 className="w-4 h-4" />
                         </div>
                         <div>
-                          <p className="text-sm font-semibold">Why P90 matters</p>
-                          <p className="text-xs text-slate-500">Use P90 to deliver with confidence under uncertainty.</p>
+                          <p className="text-sm font-semibold">Timeline guidance</p>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {projectTimeline.warning ?? "Add a start and end date to review whether the planned window still fits the task estimates."}
+                          </p>
+                          {projectTimeline.suggestedEndDate && (
+                            <p className="mt-2 text-sm text-slate-600">
+                              Suggested end date: <span className="font-semibold text-slate-900">{formatDateLabel(projectTimeline.suggestedEndDate)}</span>
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
