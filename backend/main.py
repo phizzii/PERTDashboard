@@ -1,4 +1,5 @@
 from typing import Any, List
+from dotenv import load_dotenv
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,9 +7,16 @@ import sqlite3
 from uuid import uuid4
 import json
 import os
+from pydantic import BaseModel
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "pert.db")
 
+load_dotenv()
+
+api_key = os.getenv("OPENAI_API_KEY")
+
+print("cwd", os.getcwd())
+print(f"Loaded API key:" , os.getenv("OPENAI_API_KEY"))
 
 def get_db_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -69,6 +77,18 @@ def root():
         "tasks": "/api/tasks/{project_id}",
     }
 
+
+def read_root():
+    return {"message": "backend running", "api_key": bool(api_key)}
+
+
+@app.get("/api/read-root")
+def read_root_endpoint():
+    return read_root()
+
+
+def read_key():
+    return read_root()
 
 @app.get("/health")
 def health():
@@ -210,3 +230,11 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+class PromptRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 100
+    temperature: float = 0.7
+    top_p: float = 1.0
+    n: int = 1
+    stop: List[str] = None
