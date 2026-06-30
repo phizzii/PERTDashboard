@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BarChart3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task } from "../api";
+import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, setActiveUserEmail, updateProject } from "../api";
 
 interface PertAppProps {
   userEmail: string;
@@ -130,7 +130,7 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
+    <div className="max-h-[420px] overflow-y-auto overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
           <tr>
@@ -219,7 +219,7 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   }
 
   const deadlineExceeded = plannedDays !== null && estimatedDays > plannedDays;
-  const status: "Not started" | "In progress" | "Finished" = deadlineExceeded ? "Finished" : "In progress";
+  const status: "Not started" | "In progress" | "Finished" | "Exceeding timeline" = deadlineExceeded ? "Exceeding timeline" : tasks.length > 0 ? "In progress" : "Not started";
   const warning = deadlineExceeded && startDate
     ? `Estimated work is ${estimatedDays} days, which is longer than the planned ${plannedDays}-day window. A better end date would be ${formatDateLabel(addDays(startDate, estimatedDays))}.`
     : null;
@@ -235,12 +235,15 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   };
 }
 
-function statusClasses(status: "Not started" | "In progress" | "Finished") {
+function statusClasses(status: "Not started" | "In progress" | "Finished" | "Exceeding timeline") {
   if (status === "Not started") {
     return "bg-slate-100 text-slate-700";
   }
   if (status === "In progress") {
     return "bg-emerald-100 text-emerald-700";
+  }
+  if (status === "Exceeding timeline") {
+    return "bg-amber-100 text-amber-700";
   }
   return "bg-rose-100 text-rose-700";
 }
@@ -255,6 +258,13 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   const [newProjectStartDate, setNewProjectStartDate] = useState("");
   const [newProjectEndDate, setNewProjectEndDate] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [isEditingDates, setIsEditingDates] = useState(false);
+  const [dateDraft, setDateDraft] = useState({ startDate: "", endDate: "" });
+  const [savingDates, setSavingDates] = useState(false);
+
+  useEffect(() => {
+    setActiveUserEmail(userEmail ?? null);
+  }, [userEmail]);
 
   useEffect(() => {
     const load = async () => {
@@ -295,6 +305,17 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   }, [selectedProjectId]);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+
+  useEffect(() => {
+    if (selectedProject) {
+      setDateDraft({
+        startDate: selectedProject.startDate ?? "",
+        endDate: selectedProject.endDate ?? "",
+      });
+    } else {
+      setDateDraft({ startDate: "", endDate: "" });
+    }
+  }, [selectedProject?.id, selectedProject?.startDate, selectedProject?.endDate]);
 
   const stats = useMemo(() => {
     const totalE = tasks.reduce((sum, task) => sum + task.expected, 0);
@@ -350,6 +371,29 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     }
   };
 
+  const handleSaveProjectDates = async () => {
+    if (!selectedProject) return;
+    if (dateDraft.startDate && dateDraft.endDate && dateDraft.startDate > dateDraft.endDate) {
+      toast.error("End date must be on or after the start date");
+      return;
+    }
+
+    setSavingDates(true);
+    try {
+      const updatedProject = await updateProject(selectedProject.id, {
+        startDate: dateDraft.startDate || null,
+        endDate: dateDraft.endDate || null,
+      });
+      setProjects((prev) => prev.map((project) => project.id === selectedProject.id ? updatedProject : project));
+      toast.success("Project dates updated");
+      setIsEditingDates(false);
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to update project dates");
+    } finally {
+      setSavingDates(false);
+    }
+  };
+
   const handleTaskAdded = (task: Task) => setTasks((prev) => [...prev, task]);
 
   const handleTaskDeleted = async (taskId: string) => {
@@ -364,8 +408,8 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="mx-auto max-w-7xl p-6">
+    <div className="min-h-[100dvh] overflow-hidden bg-slate-50 text-slate-900">
+      <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col p-6">
         <header className="flex flex-col gap-4 rounded-3xl bg-white border border-slate-200 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">PERT Calculator</p>
@@ -386,7 +430,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
           </div>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] mt-6">
+        <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
           <aside className="space-y-6">
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center gap-3">
@@ -506,6 +550,53 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                   {tasks.length} task{tasks.length === 1 ? "" : "s"}
                 </div>
               </div>
+              {selectedProject && (
+                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Adjust project dates</p>
+                      <p className="text-sm text-slate-500">Update the planned timeline if deadlines shift.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingDates((value) => !value)}
+                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
+                    >
+                      {isEditingDates ? "Cancel" : "Edit dates"}
+                    </button>
+                  </div>
+                  {isEditingDates && (
+                    <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Start date</span>
+                        <input
+                          type="date"
+                          value={dateDraft.startDate}
+                          onChange={(event) => setDateDraft((value) => ({ ...value, startDate: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                        />
+                      </label>
+                      <label className="text-sm text-slate-600">
+                        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">End date</span>
+                        <input
+                          type="date"
+                          value={dateDraft.endDate}
+                          onChange={(event) => setDateDraft((value) => ({ ...value, endDate: event.target.value }))}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleSaveProjectDates}
+                        disabled={savingDates}
+                        className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {savingDates ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {selectedProject ? (
