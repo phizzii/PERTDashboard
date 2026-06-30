@@ -1,8 +1,25 @@
 export const BACKEND = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
+let activeUserEmail: string | null = null;
+
+export function setActiveUserEmail(email: string | null) {
+  activeUserEmail = email;
+}
+
+function buildHeaders(headers?: HeadersInit) {
+  const merged = new Headers(headers ?? {});
+  if (!merged.has("Content-Type")) {
+    merged.set("Content-Type", "application/json");
+  }
+  if (activeUserEmail) {
+    merged.set("X-User-Email", activeUserEmail);
+  }
+  return merged;
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}) {
   const res = await fetch(`${BACKEND}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: buildHeaders(options.headers),
     ...options,
   });
   const text = await res.text();
@@ -92,6 +109,13 @@ export async function createProject(name: string, options?: { startDate?: string
   return apiFetch<Project>("/api/projects", {
     method: "POST",
     body: JSON.stringify({ name, startDate: options?.startDate ?? null, endDate: options?.endDate ?? null }),
+  });
+}
+
+export async function updateProject(projectId: string, changes: { name?: string; description?: string; startDate?: string | null; endDate?: string | null }) {
+  return apiFetch<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PUT",
+    body: JSON.stringify(changes),
   });
 }
 

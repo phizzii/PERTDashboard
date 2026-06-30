@@ -1,6 +1,6 @@
 from typing import Any, List
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from uuid import uuid4
@@ -25,11 +25,13 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT,
-      start_date TEXT, end_date TEXT
+      user_email TEXT, start_date TEXT, end_date TEXT
     );
     """)
     cur.execute("PRAGMA table_info(projects)")
     project_columns = {row[1] for row in cur.fetchall()}
+    if "user_email" not in project_columns:
+        cur.execute("ALTER TABLE projects ADD COLUMN user_email TEXT")
     if "start_date" not in project_columns:
         cur.execute("ALTER TABLE projects ADD COLUMN start_date TEXT")
     if "end_date" not in project_columns:
@@ -38,9 +40,13 @@ def init_db():
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
       optimistic REAL, most_likely REAL, pessimistic REAL,
-      expected REAL, stddev REAL, variance REAL, created_at TEXT
+      expected REAL, stddev REAL, variance REAL, created_at TEXT, user_email TEXT
     );
     """)
+    cur.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in cur.fetchall()}
+    if "user_email" not in task_columns:
+        cur.execute("ALTER TABLE tasks ADD COLUMN user_email TEXT")
     conn.commit()
     conn.close()
 
@@ -113,41 +119,92 @@ def delete_kv(key: str):
     return {"ok": True}
 
 
+def get_user_email(request: Request) -> str:
+    return request.headers.get("x-user-email", "").strip() or "anonymous"
+
+
 # Projects
 @app.get("/api/projects")
-def list_projects():
+def list_projects(request: Request):
+    user_email = get_user_email(request)
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, description, created_at AS createdAt, start_date AS startDate, end_date AS endDate FROM projects ORDER BY created_at DESC")
+    cur.execute(
+        "SELECT id, name, description, created_at AS createdAt, user_email AS userEmail, start_date AS startDate, end_date AS endDate FROM projects WHERE user_email = ? ORDER BY created_at DESC",
+        (user_email,),
+    )
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @app.post("/api/projects")
-def create_project(payload: dict):
+def create_project(request: Request, payload: dict):
     name = payload.get("name")
     if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Name required")
     pid = str(uuid4())
     created_at = datetime.utcnow().isoformat()
+    user_email = get_user_email(request)
     start_date = payload.get("startDate") or payload.get("start_date")
     end_date = payload.get("endDate") or payload.get("end_date")
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO projects (id, name, description, created_at, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
-                (pid, name.strip(), payload.get("description", ""), created_at, start_date, end_date))
+    cur.execute(
+        "INSERT INTO projects (id, name, description, created_at, user_email, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (pid, name.strip(), payload.get("description", ""), created_at, user_email, start_date, end_date),
+    )
     conn.commit()
     conn.close()
-    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at, "startDate": start_date, "endDate": end_date}
+    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at, "startDate": start_date, "endDate": end_date, "userEmail": user_email}
+
+
+@app.put("/api/projects/{project_id}")
+def update_project(project_id: str, request: Request, payload: dict):
+    user_email = get_user_email(request)
+    conn = get_db_conn()
+    cur = conn.cursor()
+
+    updates: List[str] = []
+    values: List[Any] = []
+    if "name" in payload:
+        updates.append("name = ?")
+        values.append(payload.get("name"))
+    if "description" in payload:
+        updates.append("description = ?")
+        values.append(payload.get("description"))
+    if "startDate" in payload:
+        updates.append("start_date = ?")
+        values.append(payload.get("startDate"))
+    if "endDate" in payload:
+        updates.append("end_date = ?")
+        values.append(payload.get("endDate"))
+
+    if not updates:
+        conn.close()
+        raise HTTPException(status_code=400, detail="No updates supplied")
+
+    values.extend([project_id, user_email])
+    cur.execute(f"UPDATE projects SET {', '.join(updates)} WHERE id = ? AND user_email = ?", values)
+    conn.commit()
+    cur.execute(
+        "SELECT id, name, description, created_at AS createdAt, user_email AS userEmail, start_date AS startDate, end_date AS endDate FROM projects WHERE id = ? AND user_email = ?",
+        (project_id, user_email),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return dict(row)
 
 
 @app.delete("/api/projects/{project_id}")
-def delete_project(project_id: str):
+def delete_project(project_id: str, request: Request):
+    user_email = get_user_email(request)
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
-    cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    cur.execute("DELETE FROM tasks WHERE project_id = ? AND user_email = ?", (project_id, user_email))
+    cur.execute("DELETE FROM projects WHERE id = ? AND user_email = ?", (project_id, user_email))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -155,17 +212,18 @@ def delete_project(project_id: str):
 
 # Tasks
 @app.get("/api/tasks/{project_id}")
-def list_tasks(project_id: str):
+def list_tasks(project_id: str, request: Request):
+    user_email = get_user_email(request)
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at ASC", (project_id,))
+    cur.execute("SELECT * FROM tasks WHERE project_id = ? AND user_email = ? ORDER BY created_at ASC", (project_id, user_email))
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @app.post("/api/tasks/{project_id}")
-def create_task(project_id: str, payload: dict):
+def create_task(project_id: str, request: Request, payload: dict):
     name = payload.get("name")
     optimistic = payload.get("optimistic")
     most_likely = payload.get("mostLikely") or payload.get("most_likely")
@@ -184,12 +242,13 @@ def create_task(project_id: str, payload: dict):
     stddev = (p - o) / 6
     variance = stddev ** 2
     tid = str(uuid4())
-    created_at = __import__("datetime").datetime.utcnow().isoformat()
+    created_at = datetime.utcnow().isoformat()
+    user_email = get_user_email(request)
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at),
+        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, user_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at, user_email),
     )
     conn.commit()
     conn.close()
@@ -197,10 +256,11 @@ def create_task(project_id: str, payload: dict):
 
 
 @app.delete("/api/tasks/{project_id}/{task_id}")
-def delete_task(project_id: str, task_id: str):
+def delete_task(project_id: str, task_id: str, request: Request):
+    user_email = get_user_email(request)
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM tasks WHERE id = ? AND project_id = ?", (task_id, project_id))
+    cur.execute("DELETE FROM tasks WHERE id = ? AND project_id = ? AND user_email = ?", (task_id, project_id, user_email))
     conn.commit()
     conn.close()
     return {"ok": True}
