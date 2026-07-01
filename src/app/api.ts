@@ -1,8 +1,19 @@
 export const BACKEND = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
+function getCurrentUserEmail() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return window.localStorage.getItem("pert-user-email") ?? "";
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}) {
+  const userEmail = getCurrentUserEmail();
   const res = await fetch(`${BACKEND}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(userEmail ? { "X-User-Email": userEmail } : {}),
+    },
     ...options,
   });
   const text = await res.text();
@@ -74,8 +85,28 @@ function normalizeTask(task: BackendTask): Task {
   };
 }
 
+export interface BackendRootResponse {
+  message: string;
+  health?: string;
+  projects?: string;
+  tasks?: string;
+}
+
+export interface BackendReadRootResponse {
+  message: string;
+  api_key: boolean;
+}
+
 export async function healthCheck() {
-  return apiFetch<{ status: string }>("/health");
+  return apiFetch<{ status: string }> ("/health");
+}
+
+export async function getBackendRoot() {
+  return apiFetch<BackendRootResponse>("/");
+}
+
+export async function getBackendReadRoot() {
+  return apiFetch<BackendReadRootResponse>("/api/read-root");
 }
 
 export async function listProjects() {
@@ -92,6 +123,13 @@ export async function createProject(name: string, options?: { startDate?: string
   return apiFetch<Project>("/api/projects", {
     method: "POST",
     body: JSON.stringify({ name, startDate: options?.startDate ?? null, endDate: options?.endDate ?? null }),
+  });
+}
+
+export async function updateProject(projectId: string, updates: { name?: string; startDate?: string | null; endDate?: string | null }) {
+  return apiFetch<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
   });
 }
 

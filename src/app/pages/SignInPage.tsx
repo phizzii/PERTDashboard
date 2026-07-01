@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import logo from "../../images/logo.png";
 
 interface SignInPageProps {
   onSignIn: (email: string) => void;
@@ -12,11 +13,11 @@ export default function SignInPage({ onSignIn }: SignInPageProps) {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!email.trim()) return;
-    onSignIn(email.trim());
+    const nextEmail = email.trim();
+    if (!nextEmail) return;
+    window.localStorage.setItem("pert-user-email", nextEmail);
+    onSignIn(nextEmail);
   };
-
-  const avatarInitial = email.trim().charAt(0).toUpperCase() || "P";
 
   return (
     <div
@@ -43,23 +44,22 @@ export default function SignInPage({ onSignIn }: SignInPageProps) {
           overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: "32px" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "24px" }}>
           <div
             style={{
-              width: "72px",
-              height: "72px",
-              borderRadius: "9999px",
-              backgroundColor: "#243B78",
-              boxShadow: "0 8px 20px rgba(36, 59, 120, 0.25)",
+              width: "84px",
+              height: "84px",
+              borderRadius: "24px",
+              backgroundColor: "#ffffff",
+              boxShadow: "0 10px 24px rgba(36, 59, 120, 0.16)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: "#ffffff",
-              fontSize: "24px",
-              fontWeight: 700,
+              overflow: "hidden",
+              border: "1px solid #E2E8F0",
             }}
           >
-            {avatarInitial}
+            <img src={logo} alt="PERT Optimiser logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           </div>
         </div>
 

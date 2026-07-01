@@ -1,4 +1,5 @@
 import { useState } from "react";
+import logo from "../../images/logo.png";
 import {
   LayoutDashboard,
   Compass,
@@ -237,9 +238,12 @@ export default function Landing({ onGetStarted }: LandingProps) {
         </button>
 
         {/* App title */}
-        <span className="font-semibold text-base tracking-tight" style={{ color: "#1b2a4a" }}>
-          PERT Optimiser
-        </span>
+        <div className="flex items-center gap-2">
+          <img src={logo} alt="PERT Optimiser logo" className="h-8 w-8 rounded-xl object-cover" />
+          <span className="font-semibold text-base tracking-tight" style={{ color: "#1b2a4a" }}>
+            PERT Optimiser
+          </span>
+        </div>
 
         <button
           type="button"

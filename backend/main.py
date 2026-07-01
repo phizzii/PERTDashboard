@@ -1,7 +1,7 @@
 from typing import Any, List
 from dotenv import load_dotenv
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from uuid import uuid4
@@ -16,7 +16,6 @@ load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
 print("cwd", os.getcwd())
-print(f"Loaded API key:" , os.getenv("OPENAI_API_KEY"))
 
 def get_db_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -33,7 +32,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TEXT,
-      start_date TEXT, end_date TEXT
+      start_date TEXT, end_date TEXT, owner_email TEXT
     );
     """)
     cur.execute("PRAGMA table_info(projects)")
@@ -42,15 +41,28 @@ def init_db():
         cur.execute("ALTER TABLE projects ADD COLUMN start_date TEXT")
     if "end_date" not in project_columns:
         cur.execute("ALTER TABLE projects ADD COLUMN end_date TEXT")
+    if "owner_email" not in project_columns:
+        cur.execute("ALTER TABLE projects ADD COLUMN owner_email TEXT")
     cur.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
       optimistic REAL, most_likely REAL, pessimistic REAL,
-      expected REAL, stddev REAL, variance REAL, created_at TEXT
+      expected REAL, stddev REAL, variance REAL, created_at TEXT, owner_email TEXT
     );
     """)
+    cur.execute("PRAGMA table_info(tasks)")
+    task_columns = {row[1] for row in cur.fetchall()}
+    if "owner_email" not in task_columns:
+        cur.execute("ALTER TABLE tasks ADD COLUMN owner_email TEXT")
     conn.commit()
     conn.close()
+
+
+def get_user_email(request: Request) -> str | None:
+    value = request.headers.get("x-user-email")
+    if not value:
+        return None
+    return value.strip().lower()
 
 
 app = FastAPI(title="PERT Backend")
@@ -135,17 +147,23 @@ def delete_kv(key: str):
 
 # Projects
 @app.get("/api/projects")
-def list_projects():
+def list_projects(request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        return []
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, description, created_at AS createdAt, start_date AS startDate, end_date AS endDate FROM projects ORDER BY created_at DESC")
+    cur.execute("SELECT id, name, description, created_at AS createdAt, start_date AS startDate, end_date AS endDate, owner_email AS ownerEmail FROM projects WHERE owner_email = ? ORDER BY created_at DESC", (user_email,))
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @app.post("/api/projects")
-def create_project(payload: dict):
+def create_project(payload: dict, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
     name = payload.get("name")
     if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Name required")
@@ -155,19 +173,61 @@ def create_project(payload: dict):
     end_date = payload.get("endDate") or payload.get("end_date")
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO projects (id, name, description, created_at, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?)",
-                (pid, name.strip(), payload.get("description", ""), created_at, start_date, end_date))
+    cur.execute("INSERT INTO projects (id, name, description, created_at, start_date, end_date, owner_email) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (pid, name.strip(), payload.get("description", ""), created_at, start_date, end_date, user_email))
     conn.commit()
     conn.close()
-    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at, "startDate": start_date, "endDate": end_date}
+    return {"id": pid, "name": name.strip(), "description": payload.get("description", ""), "createdAt": created_at, "startDate": start_date, "endDate": end_date, "ownerEmail": user_email}
+
+
+@app.patch("/api/projects/{project_id}")
+def update_project(project_id: str, payload: dict, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
+    if not payload:
+        raise HTTPException(status_code=400, detail="No updates supplied")
+
+    updates: List[str] = []
+    values: List[Any] = []
+    if "name" in payload and payload.get("name") is not None:
+        updates.append("name = ?")
+        values.append(payload["name"].strip())
+    if "startDate" in payload:
+        updates.append("start_date = ?")
+        values.append(payload.get("startDate"))
+    if "endDate" in payload:
+        updates.append("end_date = ?")
+        values.append(payload.get("endDate"))
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates supplied")
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM projects WHERE id = ? AND owner_email = ?", (project_id, user_email))
+    if not cur.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    query = f"UPDATE projects SET {', '.join(updates)} WHERE id = ? AND owner_email = ?"
+    cur.execute(query, values + [project_id, user_email])
+    conn.commit()
+    cur.execute("SELECT id, name, description, created_at AS createdAt, start_date AS startDate, end_date AS endDate, owner_email AS ownerEmail FROM projects WHERE id = ? AND owner_email = ?", (project_id, user_email))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row)
 
 
 @app.delete("/api/projects/{project_id}")
-def delete_project(project_id: str):
+def delete_project(project_id: str, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM tasks WHERE project_id = ?", (project_id,))
-    cur.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    cur.execute("DELETE FROM tasks WHERE project_id = ? AND owner_email = ?", (project_id, user_email))
+    cur.execute("DELETE FROM projects WHERE id = ? AND owner_email = ?", (project_id, user_email))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -175,17 +235,23 @@ def delete_project(project_id: str):
 
 # Tasks
 @app.get("/api/tasks/{project_id}")
-def list_tasks(project_id: str):
+def list_tasks(project_id: str, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        return []
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at ASC", (project_id,))
+    cur.execute("SELECT * FROM tasks WHERE project_id = ? AND owner_email = ? ORDER BY created_at ASC", (project_id, user_email))
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @app.post("/api/tasks/{project_id}")
-def create_task(project_id: str, payload: dict):
+def create_task(project_id: str, payload: dict, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
     name = payload.get("name")
     optimistic = payload.get("optimistic")
     most_likely = payload.get("mostLikely") or payload.get("most_likely")
@@ -208,19 +274,22 @@ def create_task(project_id: str, payload: dict):
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at),
+        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, owner_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at, user_email),
     )
     conn.commit()
     conn.close()
-    return {"id": tid, "projectId": project_id, "name": name.strip(), "optimistic": o, "mostLikely": m, "pessimistic": p, "expected": round(expected, 3), "stddev": round(stddev, 3), "variance": round(variance, 3), "createdAt": created_at}
+    return {"id": tid, "projectId": project_id, "name": name.strip(), "optimistic": o, "mostLikely": m, "pessimistic": p, "expected": round(expected, 3), "stddev": round(stddev, 3), "variance": round(variance, 3), "createdAt": created_at, "ownerEmail": user_email}
 
 
 @app.delete("/api/tasks/{project_id}/{task_id}")
-def delete_task(project_id: str, task_id: str):
+def delete_task(project_id: str, task_id: str, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM tasks WHERE id = ? AND project_id = ?", (task_id, project_id))
+    cur.execute("DELETE FROM tasks WHERE id = ? AND project_id = ? AND owner_email = ?", (task_id, project_id, user_email))
     conn.commit()
     conn.close()
     return {"ok": True}

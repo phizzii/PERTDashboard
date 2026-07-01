@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BarChart3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task } from "../api";
+import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, updateProject } from "../api";
 
 interface PertAppProps {
   userEmail: string;
   onSignOut: () => void;
+  onOpenAIOptimisation: () => void;
 }
 
 function pertCalc(o: number, m: number, p: number) {
@@ -130,7 +131,7 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
+    <div className="max-h-[320px] overflow-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
           <tr>
@@ -219,7 +220,7 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   }
 
   const deadlineExceeded = plannedDays !== null && estimatedDays > plannedDays;
-  const status: "Not started" | "In progress" | "Finished" = deadlineExceeded ? "Finished" : "In progress";
+  const status: "Not started" | "In progress" | "Exceeding timeline" = tasks.length === 0 ? "Not started" : deadlineExceeded ? "Exceeding timeline" : "In progress";
   const warning = deadlineExceeded && startDate
     ? `Estimated work is ${estimatedDays} days, which is longer than the planned ${plannedDays}-day window. A better end date would be ${formatDateLabel(addDays(startDate, estimatedDays))}.`
     : null;
@@ -235,7 +236,7 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   };
 }
 
-function statusClasses(status: "Not started" | "In progress" | "Finished") {
+function statusClasses(status: "Not started" | "In progress" | "Exceeding timeline") {
   if (status === "Not started") {
     return "bg-slate-100 text-slate-700";
   }
@@ -245,7 +246,7 @@ function statusClasses(status: "Not started" | "In progress" | "Finished") {
   return "bg-rose-100 text-rose-700";
 }
 
-export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
+export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: PertAppProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -255,6 +256,23 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   const [newProjectStartDate, setNewProjectStartDate] = useState("");
   const [newProjectEndDate, setNewProjectEndDate] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+  const [projectDeadlineInput, setProjectDeadlineInput] = useState("");
+  const [updatingDeadline, setUpdatingDeadline] = useState(false);
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+
+  useEffect(() => {
+    const updateViewportHeight = () => {
+      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    };
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    return () => window.removeEventListener("resize", updateViewportHeight);
+  }, []);
+
+  useEffect(() => {
+    setProjectDeadlineInput(selectedProject?.endDate ?? "");
+  }, [selectedProject?.id, selectedProject?.endDate]);
 
   useEffect(() => {
     const load = async () => {
@@ -293,8 +311,6 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     };
     load();
   }, [selectedProjectId]);
-
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
   const stats = useMemo(() => {
     const totalE = tasks.reduce((sum, task) => sum + task.expected, 0);
@@ -350,6 +366,26 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     }
   };
 
+  const handleUpdateDeadline = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedProject) return;
+    if (selectedProject.startDate && projectDeadlineInput && selectedProject.startDate > projectDeadlineInput) {
+      toast.error("The deadline must be on or after the start date");
+      return;
+    }
+
+    setUpdatingDeadline(true);
+    try {
+      const updated = await updateProject(selectedProject.id, { endDate: projectDeadlineInput || null });
+      setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? { ...project, endDate: updated.endDate ?? null } : project)));
+      toast.success("Deadline updated");
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to update deadline");
+    } finally {
+      setUpdatingDeadline(false);
+    }
+  };
+
   const handleTaskAdded = (task: Task) => setTasks((prev) => [...prev, task]);
 
   const handleTaskDeleted = async (taskId: string) => {
@@ -363,8 +399,13 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     }
   };
 
+  const handleSignOut = () => {
+    window.localStorage.removeItem("pert-user-email");
+    onSignOut();
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900" style={{ minHeight: "var(--app-height, 100vh)" }}>
       <div className="mx-auto max-w-7xl p-6">
         <header className="flex flex-col gap-4 rounded-3xl bg-white border border-slate-200 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
@@ -378,7 +419,14 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
             </div>
             <button
               type="button"
-              onClick={onSignOut}
+              onClick={onOpenAIOptimisation}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Open AI optimisation
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
             >
               <ArrowLeft className="w-4 h-4" /> Sign out
@@ -533,7 +581,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                         <div className="rounded-2xl bg-slate-900 p-3 text-white">
                           <BarChart3 className="w-4 h-4" />
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <p className="text-sm font-semibold">Timeline guidance</p>
                           <p className="mt-1 text-sm text-slate-600">
                             {projectTimeline.warning ?? "Add a start and end date to review whether the planned window still fits the task estimates."}
@@ -543,6 +591,21 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                               Suggested end date: <span className="font-semibold text-slate-900">{formatDateLabel(projectTimeline.suggestedEndDate)}</span>
                             </p>
                           )}
+                          <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={handleUpdateDeadline}>
+                            <input
+                              type="date"
+                              value={projectDeadlineInput}
+                              onChange={(event) => setProjectDeadlineInput(event.target.value)}
+                              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                            />
+                            <button
+                              type="submit"
+                              disabled={updatingDeadline}
+                              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {updatingDeadline ? "Updating…" : "Update deadline"}
+                            </button>
+                          </form>
                         </div>
                       </div>
                     </div>
@@ -553,7 +616,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                       <p className="text-sm font-semibold text-slate-900">Overview</p>
                       <p className="mt-2 text-sm text-slate-500">Tasks are saved to your backend and may be loaded on refresh.</p>
                     </div>
-                    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"> 
+                    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <TaskTable tasks={tasks} onDelete={handleTaskDeleted} />
                     </div>
                   </div>
