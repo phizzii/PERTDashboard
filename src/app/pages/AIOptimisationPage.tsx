@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import logo from "../../images/logo.png";
 import { askAIChat, getProjectOptimisationSummary, OptimisationSummary, Project, Task } from "../api";
-import { buildAssessmentPrompt, buildChatPrompt, buildForecastReasoningPrompt, buildStageImprovementPrompt, buildStageSolutionPrompt, buildSuggestionPrompt } from "../ai/prompts";
+import { buildAssessmentPrompt, buildChatPrompt, buildStageImprovementPrompt, buildStageSolutionPrompt, buildSuggestionPrompt } from "../ai/prompts";
 
 type ChatMessage = { role: "user" | "assistant"; content: string; files?: string[]; apiPrompt?: string };
 
@@ -477,14 +477,7 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
     return [
       { title: "Timeline confidence", body: `${optimisation.projectName} is tracking at ${optimisation.completionLikelihood}% confidence on the current plan.`, buttonLabel: "Review" },
       { title: "Resource balance", body: `Expected duration is ${optimisation.metrics.expectedTotal} days with ${optimisation.metrics.varianceTotal.toFixed(2)} variance.`, buttonLabel: "Inspect" },
-      { title: "Risk visibility", body: buildForecastReasoningPrompt({
-        projectName: optimisation.projectName,
-        completionLikelihood: optimisation.completionLikelihood,
-        plannedDays: optimisation.metrics.plannedDays,
-        expectedTotal: optimisation.metrics.expectedTotal,
-        varianceTotal: optimisation.metrics.varianceTotal,
-        selectedStage,
-      }), buttonLabel: "Assess" },
+      { title: "Risk visibility", body: optimisation.explanation || `This forecast is ${optimisation.completionLikelihood}% likely to succeed with an expected ${optimisation.metrics.expectedTotal} days and ${optimisation.metrics.varianceTotal.toFixed(2)} variance.`, buttonLabel: "Assess" },
     ];
   }, [optimisation, selectedStage]);
 
@@ -575,14 +568,7 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
 
         <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <PredictionChartCard data={forecastChartData} />
-          <PredictionExplanationCard explanation={buildForecastReasoningPrompt({
-            projectName: projectName || "this project",
-            completionLikelihood: optimisation?.completionLikelihood,
-            plannedDays: optimisation?.metrics.plannedDays,
-            expectedTotal: optimisation?.metrics.expectedTotal,
-            varianceTotal: optimisation?.metrics.varianceTotal,
-            selectedStage,
-          })} />
+          <PredictionExplanationCard explanation={optimisation?.explanation ?? "This forecast uses the PERT expected durations and variance from the current tasks to estimate how resilient the plan is against the selected deadline."} />
         </section>
 
         <InfoBanner projectName={projectName || "Project"} completionLikelihood={optimisation?.completionLikelihood ?? 72} />

@@ -569,13 +569,45 @@ def get_ai_reply(payload: AIChatRequest) -> tuple[str, str]:
                 data = json.loads(response.read().decode("utf-8"))
                 reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 if reply:
-                    return reply.strip(), "openai"
+                    cleaned = sanitize_ai_reply(reply)
+                    return cleaned.strip(), "openai"
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="ignore")
             print(f"OpenAI HTTP error {exc.code}: {error_body}")
         except Exception as exc:
             print(f"OpenAI request failed: {exc}")
     return build_fallback_ai_reply(payload), "fallback"
+
+
+def sanitize_ai_reply(text: str) -> str:
+    """Strip common Markdown formatting and list markers to produce plain text."""
+    import re
+
+    s = text
+    # Remove code fences
+    s = re.sub(r"```[\s\S]*?```", "", s)
+    # Remove inline code
+    s = re.sub(r"`([^`]*)`", r"\1", s)
+    # Remove bold/italic markers **text**, __text__, *text*, _text_
+    s = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+    s = re.sub(r"__(.*?)__", r"\1", s)
+    s = re.sub(r"\*(.*?)\*", r"\1", s)
+    s = re.sub(r"_(.*?)_", r"\1", s)
+    # Remove headings starting with #
+    s = re.sub(r"^\s*#+\s*", "", s, flags=re.MULTILINE)
+    # Remove list markers (-, *, •) and leading numbering
+    s = re.sub(r"^\s*[-*•]\s+", "", s, flags=re.MULTILINE)
+    s = re.sub(r"^\s*\d+[.)]\s+", "", s, flags=re.MULTILINE)
+    # Remove common section labels (case-insensitive), whether at line starts or inline
+    s = re.sub(r"(?mi)\b(assessment|what is going well|what should be inspected closely|what should be inspected|what should be reviewed|what is going well|what should be inspected)\b[:\-]*\s*", "", s)
+
+    # Collapse lines and convert into a single paragraph by joining non-empty lines
+    lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    paragraph = " ".join(lines)
+
+    # Collapse multiple spaces
+    paragraph = re.sub(r"\s{2,}", " ", paragraph)
+    return paragraph.strip()
 
 
 @app.post("/api/ai/chat")

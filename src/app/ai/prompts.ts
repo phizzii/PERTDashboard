@@ -23,7 +23,7 @@ export function buildForecastReasoningPrompt(context: PromptContext) {
   const variance = context.varianceTotal ?? 0;
   const buffer = context.plannedDays ? `with ${context.plannedDays} planned days in the window` : "with the current project dates";
 
-  return `This forecast is ${likelihood}% likely to succeed because the plan currently has ${expected} days of expected effort and ${variance} variance ${buffer}. The reasoning is to protect the critical path ${stageLabel} and keep contingency time in place before the next milestone.`;
+  return `This forecast is ${likelihood}% likely to succeed because the plan currently has ${expected} days of expected effort and ${variance} variance ${buffer}. The reasoning is to protect the critical path ${stageLabel} and keep contingency time in place before the next milestone. Return this reasoning as plain text only. Do not use Markdown, bullets, asterisks, or any special formatting.`;
 }
 
 export function buildChatPrompt(context: PromptContext) {
@@ -31,7 +31,7 @@ export function buildChatPrompt(context: PromptContext) {
     ? ` for ${context.selectedStage}`
     : "";
 
-  return `You are a PERT project planning assistant helping with ${context.projectName}${stageLabel}. The user asked: "${context.userInput ?? "Please help me improve this plan"}". Answer in clear UK English, keep it practical, and focus on the next best improvement to the plan.`;
+  return `You are a PERT project planning assistant helping with ${context.projectName}${stageLabel}. The user asked: "${context.userInput ?? "Please help me improve this plan"}". Answer in clear UK English, keep it practical, and focus on the next best improvement to the plan. Return your reply as plain text only — do not use Markdown, bullets, lists, asterisks, or other markup.`;
 }
 
 export function buildSuggestionPrompt(context: PromptContext, suggestionLabel: string) {
@@ -39,7 +39,7 @@ export function buildSuggestionPrompt(context: PromptContext, suggestionLabel: s
     ? ` for ${context.selectedStage}`
     : "";
 
-  return `Create a concise practical recommendation labelled ${suggestionLabel}${stageLabel} for ${context.projectName}.`;
+  return `Create a concise practical recommendation labelled ${suggestionLabel}${stageLabel} for ${context.projectName}. Return the recommendation as plain text only — no Markdown, bullets, asterisks, or list formatting.`;
 }
 
 export function buildStageImprovementPrompt(context: PromptContext) {
@@ -50,7 +50,7 @@ export function buildStageImprovementPrompt(context: PromptContext) {
     ? `The current PERT estimates are O=${context.stageEstimate.optimistic}, M=${context.stageEstimate.mostLikely}, P=${context.stageEstimate.pessimistic}.`
     : "";
 
-  return `You are supporting a PERT planning review for ${context.projectName}. ${estimateContext} For ${stageLabel}, describe exactly three concise, practical improvement points that could make the stage more reliable. Keep the response as a simple list with one point per line and no extra commentary.`;
+  return `You are supporting a PERT planning review for ${context.projectName}. ${estimateContext} For ${stageLabel}, describe exactly three concise, practical improvement points that could make the stage more reliable. Return three short paragraphs, one per line, with no extra commentary. Do not use Markdown, bullets, asterisks, or other formatting.`;
 }
 
 export function buildStageSolutionPrompt(context: PromptContext, improvementPoint: string) {
@@ -58,7 +58,7 @@ export function buildStageSolutionPrompt(context: PromptContext, improvementPoin
     ? `for ${context.selectedStage}`
     : "for the overall plan";
 
-  return `You are supporting a PERT planning review for ${context.projectName}. ${stageLabel} has the following improvement idea: "${improvementPoint}". Give one clear, practical solution that the team could implement next, and keep it concise in UK English.`;
+  return `You are supporting a PERT planning review for ${context.projectName}. ${stageLabel} has the following improvement idea: "${improvementPoint}". Give one clear, practical solution that the team could implement next, and keep it concise in UK English. Return the solution as plain text only — no Markdown or bullets.`;
 }
 
 export function buildAssessmentPrompt(context: PromptContext, assessmentKind: "review" | "inspect" | "assess") {
@@ -72,5 +72,5 @@ export function buildAssessmentPrompt(context: PromptContext, assessmentKind: "r
     assess: "what is going well and what should be assessed for risk",
   }[assessmentKind];
 
-  return `You are supporting a PERT planning review for ${context.projectName}. ${stageLabel}. Briefly explain ${focusText} in a practical, encouraging way, using UK English and keeping it concise.`;
+  return `You are supporting a PERT planning review for ${context.projectName}. ${stageLabel}. Briefly explain ${focusText} in a practical, encouraging way, using UK English and keeping it concise. Return the answer as a single short paragraph (2-3 sentences) in plain text only — do not use Markdown, bold, bullets, headings, or list markers.`;
 }

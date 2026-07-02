@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import logo from "../../images/logo.png";
+import { listProjects, Project as ApiProject } from "../api";
 import {
   LayoutDashboard,
   Compass,
@@ -14,7 +15,7 @@ import {
 
 // ── Sample project data (visual only — no backend) ───────────────────────────
 
-const SAMPLE_PROJECTS = [
+const SAMPLE_PROJECTS: ApiProject[] = [
   {
     id: "1",
     name: "Platform Redesign",
@@ -62,7 +63,7 @@ const SAMPLE_PROJECTS = [
   },
 ];
 
-type Project = (typeof SAMPLE_PROJECTS)[number];
+type Project = ApiProject;
 
 // Sort: Active → Ongoing Low Priority → Completed
 const sortProjects = (projects: Project[]) =>
@@ -125,7 +126,27 @@ interface LandingProps {
 
 export default function Landing({ onGetStarted }: LandingProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const sorted = sortProjects(SAMPLE_PROJECTS);
+  const [projects, setProjects] = useState<Project[]>(SAMPLE_PROJECTS);
+  const sorted = sortProjects(projects);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const backend = await listProjects();
+        if (!mounted) return;
+        if (backend && backend.length > 0) {
+          setProjects(backend as Project[]);
+        }
+      } catch (err) {
+        // keep sample projects on error
+        console.warn("Could not load projects from backend:", err);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const lastAccessed = new Date().toLocaleString("en-GB", {
     day: "2-digit", month: "short", year: "numeric",
