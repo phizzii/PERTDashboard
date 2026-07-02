@@ -7,5 +7,9 @@
 
   Run `npm i` to install the dependencies.
 
-  Run `npm run dev` to start the development server.
+  Run `npm run dev` to start the frontend and backend together.
+
+  The frontend expects the API at `http://localhost:8000`. If you want to run the
+  two processes separately, use `npm run backend` in one terminal and
+  `npm run frontend` in another.
   

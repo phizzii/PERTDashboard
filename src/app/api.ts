@@ -9,13 +9,26 @@ function getCurrentUserEmail() {
 
 async function apiFetch<T>(path: string, options: RequestInit = {}) {
   const userEmail = getCurrentUserEmail();
-  const res = await fetch(`${BACKEND}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(userEmail ? { "X-User-Email": userEmail } : {}),
-    },
-    ...options,
-  });
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (userEmail) {
+    headers.set("X-User-Email", userEmail);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error(
+      `Unable to reach the backend at ${BACKEND}. Start it with npm run dev or npm run backend.`
+    );
+  }
+
   const text = await res.text();
   if (!res.ok) {
     throw new Error(text || res.statusText || "Request failed");

@@ -4,8 +4,10 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "backend": "python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000",
     "build": "vite build",
-    "dev": "vite"
+    "dev": "node scripts/dev.mjs",
+    "frontend": "vite"
   },
   "dependencies": {
     "react": "18.3.1",
