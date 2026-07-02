@@ -1,25 +1,19 @@
 export const BACKEND = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
 
-let activeUserEmail: string | null = null;
-
-export function setActiveUserEmail(email: string | null) {
-  activeUserEmail = email;
-}
-
-function buildHeaders(headers?: HeadersInit) {
-  const merged = new Headers(headers ?? {});
-  if (!merged.has("Content-Type")) {
-    merged.set("Content-Type", "application/json");
+function getCurrentUserEmail() {
+  if (typeof window === "undefined") {
+    return "";
   }
-  if (activeUserEmail) {
-    merged.set("X-User-Email", activeUserEmail);
-  }
-  return merged;
+  return window.localStorage.getItem("pert-user-email") ?? "";
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}) {
+  const userEmail = getCurrentUserEmail();
   const res = await fetch(`${BACKEND}${path}`, {
-    headers: buildHeaders(options.headers),
+    headers: {
+      "Content-Type": "application/json",
+      ...(userEmail ? { "X-User-Email": userEmail } : {}),
+    },
     ...options,
   });
   const text = await res.text();
@@ -58,6 +52,8 @@ export interface Task {
   stdDev: number;
   variance: number;
   createdAt: string;
+  dependencyId?: string | null;
+  sortOrder?: number;
 }
 
 interface BackendTask {
@@ -74,6 +70,10 @@ interface BackendTask {
   variance: number;
   created_at: string;
   createdAt?: string;
+  dependency_id?: string | null;
+  dependencyId?: string | null;
+  position?: number | null;
+  sortOrder?: number | null;
 }
 
 function normalizeTask(task: BackendTask): Task {
@@ -88,11 +88,48 @@ function normalizeTask(task: BackendTask): Task {
     stdDev: task.stddev,
     variance: task.variance,
     createdAt: task.createdAt ?? task.created_at,
+    dependencyId: task.dependencyId ?? task.dependency_id ?? null,
+    sortOrder: task.sortOrder ?? task.position ?? undefined,
+  };
+}
+
+export interface BackendRootResponse {
+  message: string;
+  health?: string;
+  projects?: string;
+  tasks?: string;
+}
+
+export interface BackendReadRootResponse {
+  message: string;
+  api_key: boolean;
+}
+
+export interface OptimisationSummary {
+  projectName: string;
+  completionLikelihood: number;
+  headline: string;
+  explanation: string;
+  chartData: Array<{ day: string; value: number }>;
+  summaryBullets: string[];
+  suggestions: Array<{ label: string; title: string }>;
+  metrics: {
+    expectedTotal: number;
+    varianceTotal: number;
+    plannedDays: number | null;
   };
 }
 
 export async function healthCheck() {
-  return apiFetch<{ status: string }>("/health");
+  return apiFetch<{ status: string }> ("/health");
+}
+
+export async function getBackendRoot() {
+  return apiFetch<BackendRootResponse>("/");
+}
+
+export async function getBackendReadRoot() {
+  return apiFetch<BackendReadRootResponse>("/api/read-root");
 }
 
 export async function listProjects() {
@@ -112,16 +149,35 @@ export async function createProject(name: string, options?: { startDate?: string
   });
 }
 
-export async function updateProject(projectId: string, changes: { name?: string; description?: string; startDate?: string | null; endDate?: string | null }) {
+export async function updateProject(projectId: string, updates: { name?: string; startDate?: string | null; endDate?: string | null }) {
   return apiFetch<Project>(`/api/projects/${encodeURIComponent(projectId)}`, {
-    method: "PUT",
-    body: JSON.stringify(changes),
+    method: "PATCH",
+    body: JSON.stringify(updates),
   });
 }
 
 export async function deleteProject(projectId: string) {
   return apiFetch<{ ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function getProjectOptimisationSummary(projectId: string) {
+  return apiFetch<OptimisationSummary>(`/api/projects/${encodeURIComponent(projectId)}/optimisation`);
+}
+
+export async function askAIChat(payload: {
+  prompt: string;
+  projectName?: string;
+  selectedStage?: string;
+  completionLikelihood?: number;
+  expectedTotal?: number;
+  varianceTotal?: number;
+  plannedDays?: number | null;
+}) {
+  return apiFetch<{ reply: string; source: string }>('/api/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 
@@ -135,9 +191,25 @@ export async function createTask(projectId: string, payload: {
   optimistic: number;
   mostLikely: number;
   pessimistic: number;
+  dependencyId?: string | null;
 }) {
   const backendTask = await apiFetch<BackendTask>(`/api/tasks/${encodeURIComponent(projectId)}`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalizeTask(backendTask);
+}
+
+export async function updateTask(projectId: string, taskId: string, payload: {
+  name?: string;
+  optimistic?: number;
+  mostLikely?: number;
+  pessimistic?: number;
+  dependencyId?: string | null;
+  sortOrder?: number | null;
+}) {
+  const backendTask = await apiFetch<BackendTask>(`/api/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
   return normalizeTask(backendTask);

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import logo from "../../images/logo.png";
+import { listProjects, Project as ApiProject } from "../api";
 import {
   LayoutDashboard,
   Compass,
@@ -13,7 +15,7 @@ import {
 
 // ── Sample project data (visual only — no backend) ───────────────────────────
 
-const SAMPLE_PROJECTS = [
+const SAMPLE_PROJECTS: ApiProject[] = [
   {
     id: "1",
     name: "Platform Redesign",
@@ -61,7 +63,7 @@ const SAMPLE_PROJECTS = [
   },
 ];
 
-type Project = (typeof SAMPLE_PROJECTS)[number];
+type Project = ApiProject;
 
 // Sort: Active → Ongoing Low Priority → Completed
 const sortProjects = (projects: Project[]) =>
@@ -124,7 +126,27 @@ interface LandingProps {
 
 export default function Landing({ onGetStarted }: LandingProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const sorted = sortProjects(SAMPLE_PROJECTS);
+  const [projects, setProjects] = useState<Project[]>(SAMPLE_PROJECTS);
+  const sorted = sortProjects(projects);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const backend = await listProjects();
+        if (!mounted) return;
+        if (backend && backend.length > 0) {
+          setProjects(backend as Project[]);
+        }
+      } catch (err) {
+        // keep sample projects on error
+        console.warn("Could not load projects from backend:", err);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const lastAccessed = new Date().toLocaleString("en-GB", {
     day: "2-digit", month: "short", year: "numeric",
@@ -237,9 +259,12 @@ export default function Landing({ onGetStarted }: LandingProps) {
         </button>
 
         {/* App title */}
-        <span className="font-semibold text-base tracking-tight" style={{ color: "#1b2a4a" }}>
-          PERT Optimiser
-        </span>
+        <div className="flex items-center gap-3 ml-4">
+          <img src={logo} alt="PERT Optimiser logo" className="h-10 w-10 rounded-2xl object-cover" />
+          <span className="font-semibold text-base tracking-tight" style={{ color: "#1b2a4a" }}>
+            PERT Optimiser
+          </span>
+        </div>
 
         <button
           type="button"
@@ -266,16 +291,19 @@ export default function Landing({ onGetStarted }: LandingProps) {
       {/* ── Main content ── */}
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 flex flex-col gap-4 overflow-auto">
         {/* Heading */}
-        <div className="mb-2">
-          <h1
-            className="font-bold leading-tight"
-            style={{ fontSize: 28, color: "#1b2a4a", letterSpacing: "-0.5px" }}
-          >
-            Welcome back, User
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "#636e72" }}>
-            Continue managing your project schedules.
-          </p>
+        <div className="mb-2 flex items-start gap-3 rounded-3xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+          <img src={logo} alt="PERT Optimiser logo" className="h-12 w-12 rounded-2xl object-cover" />
+          <div>
+            <h1
+              className="font-bold leading-tight"
+              style={{ fontSize: 28, color: "#1b2a4a", letterSpacing: "-0.5px" }}
+            >
+              Welcome back, User
+            </h1>
+            <p className="mt-1 text-sm" style={{ color: "#636e72" }}>
+              Continue managing your project schedules.
+            </p>
+          </div>
         </div>
 
         {/* Section label */}

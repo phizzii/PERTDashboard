@@ -1,11 +1,14 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DndProvider, useDrag, useDrop } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
 import { ArrowLeft, BarChart3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, setActiveUserEmail, updateProject } from "../api";
+import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, updateProject, updateTask } from "../api";
 
 interface PertAppProps {
   userEmail: string;
   onSignOut: () => void;
+  onOpenAIOptimisation: (project: Project | null, projects: Project[], tasks: Task[]) => void;
 }
 
 function pertCalc(o: number, m: number, p: number) {
@@ -18,11 +21,12 @@ function pertCalc(o: number, m: number, p: number) {
   };
 }
 
-function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: Task) => void }) {
+function TaskForm({ projectId, tasks, onAdded }: { projectId: string; tasks: Task[]; onAdded: (task: Task) => void }) {
   const [name, setName] = useState("");
   const [o, setO] = useState("");
   const [m, setM] = useState("");
   const [p, setP] = useState("");
+  const [dependencyId, setDependencyId] = useState("");
   const [loading, setLoading] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
@@ -44,14 +48,16 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         optimistic: oN,
         mostLikely: mN,
         pessimistic: pN,
+        dependencyId: dependencyId || null,
       });
       onAdded(task);
       setName("");
       setO("");
       setM("");
       setP("");
+      setDependencyId("");
       nameRef.current?.focus();
-      toast.success("Task saved");
+      toast.success("Stage saved");
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to save task");
     } finally {
@@ -69,13 +75,13 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
           <Plus className="w-4 h-4" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">Add task estimate</p>
-          <p className="text-xs text-slate-500">Save optimistic, most likely, and pessimistic values.</p>
+          <p className="text-sm font-semibold text-slate-900">Add stage estimate</p>
+          <p className="text-xs text-slate-500">Save optimistic, most likely, and pessimistic values for the stage.</p>
         </div>
       </div>
 
       <div className="grid gap-3">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Task name</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stage name</label>
         <input
           ref={nameRef}
           type="text"
@@ -87,7 +93,7 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
           { label: "Optimistic", value: o, setter: setO, ring: "focus:ring-emerald-500/30" },
           { label: "Most Likely", value: m, setter: setM, ring: "focus:ring-blue-500/30" },
@@ -109,32 +115,135 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         ))}
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dependency</label>
+          <select
+            value={dependencyId}
+            onChange={(event) => setDependencyId(event.target.value)}
+            className={inputClass}
+          >
+            <option value="">No dependency</option>
+            {tasks
+              .filter((task) => task.id !== "")
+              .map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.name}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stage order</label>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Added after the current list order
+          </div>
+        </div>
+      </div>
+
       <button
         type="submit"
         disabled={loading || !name.trim() || !o || !m || !p}
         className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {loading ? "Saving..." : "Add task"}
+        {loading ? "Saving..." : "Add stage"}
       </button>
     </form>
   );
 }
 
-function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: string) => void }) {
+function DraggableStageRow({ task, index, tasks, onDelete, onEdit, onReorder }: { task: Task; index: number; tasks: Task[]; onDelete: (taskId: string) => void; onEdit: (taskId: string, updates: Partial<Task>) => void; onReorder: (taskId: string, direction: "up" | "down") => void }) {
+  const [, drag] = useDrag(() => ({
+    type: "stage",
+    item: { id: task.id, index },
+  }));
+
+  const [, drop] = useDrop(() => ({
+    accept: "stage",
+    hover: (item: { id: string; index: number }) => {
+      if (item.id !== task.id) {
+        onReorder(item.id, item.index < index ? "up" : "down");
+      }
+    },
+  }));
+
+  return (
+    <tr ref={(node) => drag(drop(node))} className="hover:bg-slate-50 transition-colors">
+      <td className="px-5 py-3 font-medium text-slate-900">
+        <div className="flex flex-col gap-1">
+          <span>{task.name}</span>
+          {task.dependencyId && (
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Depends on {tasks.find((candidate) => candidate.id === task.dependencyId)?.name ?? "another stage"}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.optimistic}
+          onChange={(event) => onEdit(task.id, { optimistic: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.mostLikely}
+          onChange={(event) => onEdit(task.id, { mostLikely: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.pessimistic}
+          onChange={(event) => onEdit(task.id, { pessimistic: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-4 py-3 text-right font-semibold text-slate-900">{task.expected}</td>
+      <td className="px-4 py-3 text-right text-slate-700">{task.stdDev}</td>
+      <td className="px-4 py-3 text-right text-slate-700">{task.variance}</td>
+      <td className="px-4 py-3 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={() => onReorder(task.id, "up")} disabled={index === 0} className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">↑</button>
+          <button type="button" onClick={() => onReorder(task.id, "down")} disabled={index === tasks.length - 1} className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">↓</button>
+          <button
+            type="button"
+            onClick={() => onDelete(task.id)}
+            className="text-slate-400 transition hover:text-rose-500"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function TaskTable({ tasks, onDelete, onEdit, onReorder }: { tasks: Task[]; onDelete: (taskId: string) => void; onEdit: (taskId: string, updates: Partial<Task>) => void; onReorder: (taskId: string, direction: "up" | "down") => void }) {
   if (tasks.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
-        No tasks yet. Add your first PERT estimate.
+        No stages yet. Add your first PERT estimate.
       </div>
     );
   }
 
   return (
-    <div className="max-h-[420px] overflow-y-auto overflow-x-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
+    <div className="max-h-[320px] overflow-auto rounded-3xl border border-gray-200 bg-white shadow-sm">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <th className="px-5 py-3">Task</th>
+            <th className="px-5 py-3">Stage</th>
             <th className="px-4 py-3 text-right">O</th>
             <th className="px-4 py-3 text-right">M</th>
             <th className="px-4 py-3 text-right">P</th>
@@ -145,25 +254,8 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {tasks.map((task) => (
-            <tr key={task.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-5 py-3 font-medium text-slate-900">{task.name}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.optimistic}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.mostLikely}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.pessimistic}</td>
-              <td className="px-4 py-3 text-right font-semibold text-slate-900">{task.expected}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.stdDev}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.variance}</td>
-              <td className="px-4 py-3 text-right">
-                <button
-                  type="button"
-                  onClick={() => onDelete(task.id)}
-                  className="text-slate-400 transition hover:text-rose-500"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </td>
-            </tr>
+          {tasks.map((task, index) => (
+            <DraggableStageRow key={task.id} task={task} index={index} tasks={tasks} onDelete={onDelete} onEdit={onEdit} onReorder={onReorder} />
           ))}
         </tbody>
       </table>
@@ -219,7 +311,7 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   }
 
   const deadlineExceeded = plannedDays !== null && estimatedDays > plannedDays;
-  const status: "Not started" | "In progress" | "Finished" | "Exceeding timeline" = deadlineExceeded ? "Exceeding timeline" : tasks.length > 0 ? "In progress" : "Not started";
+  const status: "Not started" | "In progress" | "Exceeding timeline" = tasks.length === 0 ? "Not started" : deadlineExceeded ? "Exceeding timeline" : "In progress";
   const warning = deadlineExceeded && startDate
     ? `Estimated work is ${estimatedDays} days, which is longer than the planned ${plannedDays}-day window. A better end date would be ${formatDateLabel(addDays(startDate, estimatedDays))}.`
     : null;
@@ -235,20 +327,17 @@ function getProjectTimeline(project: Project | null, tasks: Task[]) {
   };
 }
 
-function statusClasses(status: "Not started" | "In progress" | "Finished" | "Exceeding timeline") {
+function statusClasses(status: "Not started" | "In progress" | "Exceeding timeline") {
   if (status === "Not started") {
     return "bg-slate-100 text-slate-700";
   }
   if (status === "In progress") {
     return "bg-emerald-100 text-emerald-700";
   }
-  if (status === "Exceeding timeline") {
-    return "bg-amber-100 text-amber-700";
-  }
   return "bg-rose-100 text-rose-700";
 }
 
-export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
+export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: PertAppProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -258,13 +347,24 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
   const [newProjectStartDate, setNewProjectStartDate] = useState("");
   const [newProjectEndDate, setNewProjectEndDate] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
-  const [isEditingDates, setIsEditingDates] = useState(false);
-  const [dateDraft, setDateDraft] = useState({ startDate: "", endDate: "" });
-  const [savingDates, setSavingDates] = useState(false);
+  const [projectDeadlineInput, setProjectDeadlineInput] = useState("");
+  const [updatingDeadline, setUpdatingDeadline] = useState(false);
+  const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
   useEffect(() => {
-    setActiveUserEmail(userEmail ?? null);
-  }, [userEmail]);
+    const updateViewportHeight = () => {
+      document.documentElement.style.setProperty("--app-height", `${window.innerHeight}px`);
+    };
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    return () => window.removeEventListener("resize", updateViewportHeight);
+  }, []);
+
+  useEffect(() => {
+    setProjectDeadlineInput(selectedProject?.endDate ?? "");
+  }, [selectedProject?.id, selectedProject?.endDate]);
 
   useEffect(() => {
     const load = async () => {
@@ -303,19 +403,6 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     };
     load();
   }, [selectedProjectId]);
-
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
-
-  useEffect(() => {
-    if (selectedProject) {
-      setDateDraft({
-        startDate: selectedProject.startDate ?? "",
-        endDate: selectedProject.endDate ?? "",
-      });
-    } else {
-      setDateDraft({ startDate: "", endDate: "" });
-    }
-  }, [selectedProject?.id, selectedProject?.startDate, selectedProject?.endDate]);
 
   const stats = useMemo(() => {
     const totalE = tasks.reduce((sum, task) => sum + task.expected, 0);
@@ -371,50 +458,99 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
     }
   };
 
-  const handleSaveProjectDates = async () => {
+  const handleUpdateDeadline = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!selectedProject) return;
-    if (dateDraft.startDate && dateDraft.endDate && dateDraft.startDate > dateDraft.endDate) {
-      toast.error("End date must be on or after the start date");
+    if (selectedProject.startDate && projectDeadlineInput && selectedProject.startDate > projectDeadlineInput) {
+      toast.error("The deadline must be on or after the start date");
       return;
     }
 
-    setSavingDates(true);
+    setUpdatingDeadline(true);
     try {
-      const updatedProject = await updateProject(selectedProject.id, {
-        startDate: dateDraft.startDate || null,
-        endDate: dateDraft.endDate || null,
-      });
-      setProjects((prev) => prev.map((project) => project.id === selectedProject.id ? updatedProject : project));
-      toast.success("Project dates updated");
-      setIsEditingDates(false);
+      const updated = await updateProject(selectedProject.id, { endDate: projectDeadlineInput || null });
+      setProjects((prev) => prev.map((project) => (project.id === selectedProject.id ? { ...project, endDate: updated.endDate ?? null } : project)));
+      toast.success("Deadline updated");
     } catch (error: any) {
-      toast.error(error?.message ?? "Unable to update project dates");
+      toast.error(error?.message ?? "Unable to update deadline");
     } finally {
-      setSavingDates(false);
+      setUpdatingDeadline(false);
     }
   };
 
   const handleTaskAdded = (task: Task) => setTasks((prev) => [...prev, task]);
+
+  const handleTaskEdited = async (taskId: string, updates: Partial<Task>) => {
+    if (!selectedProjectId) return;
+
+    const nextTask = tasks.find((task) => task.id === taskId);
+    if (!nextTask) return;
+
+    try {
+      setUpdatingTaskId(taskId);
+      const updated = await updateTask(selectedProjectId, taskId, {
+        name: updates.name,
+        optimistic: updates.optimistic,
+        mostLikely: updates.mostLikely,
+        pessimistic: updates.pessimistic,
+        dependencyId: updates.dependencyId,
+      });
+
+      setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...updated, expected: updated.expected, stdDev: updated.stdDev, variance: updated.variance } : task)));
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to update stage");
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  };
 
   const handleTaskDeleted = async (taskId: string) => {
     if (!selectedProjectId) return;
     try {
       await deleteTask(selectedProjectId, taskId);
       setTasks((prev) => prev.filter((task) => task.id !== taskId));
-      toast.success("Task removed");
+      toast.success("Stage removed");
     } catch (error: any) {
-      toast.error(error?.message ?? "Unable to delete task");
+      toast.error(error?.message ?? "Unable to delete stage");
     }
   };
 
+  const handleTaskReordered = async (taskId: string, direction: "up" | "down") => {
+    if (!selectedProjectId) return;
+
+    const currentIndex = tasks.findIndex((task) => task.id === taskId);
+    if (currentIndex < 0) return;
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= tasks.length) return;
+
+    const nextTasks = [...tasks];
+    const [movedTask] = nextTasks.splice(currentIndex, 1);
+    nextTasks.splice(targetIndex, 0, movedTask);
+
+    setTasks(nextTasks);
+
+    try {
+      await Promise.all(nextTasks.map((task, index) => updateTask(selectedProjectId, task.id, { sortOrder: index + 1 })));
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to reorder stages");
+    }
+  };
+
+  const handleSignOut = () => {
+    window.localStorage.removeItem("pert-user-email");
+    onSignOut();
+  };
+
   return (
-    <div className="min-h-[100dvh] overflow-hidden bg-slate-50 text-slate-900">
-      <div className="mx-auto flex min-h-[100dvh] max-w-7xl flex-col p-6">
+    <DndProvider backend={HTML5Backend}>
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900" style={{ minHeight: "var(--app-height, 100vh)" }}>
+      <div className="mx-auto max-w-7xl p-6">
         <header className="flex flex-col gap-4 rounded-3xl bg-white border border-slate-200 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">PERT Calculator</p>
             <h1 className="mt-2 text-3xl font-semibold text-slate-900">Project risk and duration estimates</h1>
-            <p className="mt-2 text-sm text-slate-600">Create projects, add task estimates, and review timeline health with dates and deadline guidance.</p>
+            <p className="mt-2 text-sm text-slate-600">Create projects, add stage estimates, and review timeline health with dates and deadline guidance.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700">
@@ -422,7 +558,14 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
             </div>
             <button
               type="button"
-              onClick={onSignOut}
+              onClick={() => onOpenAIOptimisation(selectedProject, projects, tasks)}
+              className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Open AI optimisation
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
             >
               <ArrowLeft className="w-4 h-4" /> Sign out
@@ -430,7 +573,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
           </div>
         </header>
 
-        <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] mt-6">
           <aside className="space-y-6">
             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center gap-3">
@@ -439,7 +582,7 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Projects</p>
-                  <p className="text-xs text-slate-500">Organize calculations by workstream.</p>
+                  <p className="text-xs text-slate-500">Organise calculations by workstream.</p>
                 </div>
               </div>
               <form className="mt-5 space-y-3" onSubmit={handleAddProject}>
@@ -547,56 +690,9 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                   )}
                 </div>
                 <div className="rounded-3xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  {tasks.length} task{tasks.length === 1 ? "" : "s"}
+                  {tasks.length} stage{tasks.length === 1 ? "" : "s"}
                 </div>
               </div>
-              {selectedProject && (
-                <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Adjust project dates</p>
-                      <p className="text-sm text-slate-500">Update the planned timeline if deadlines shift.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingDates((value) => !value)}
-                      className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900"
-                    >
-                      {isEditingDates ? "Cancel" : "Edit dates"}
-                    </button>
-                  </div>
-                  {isEditingDates && (
-                    <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Start date</span>
-                        <input
-                          type="date"
-                          value={dateDraft.startDate}
-                          onChange={(event) => setDateDraft((value) => ({ ...value, startDate: event.target.value }))}
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                        />
-                      </label>
-                      <label className="text-sm text-slate-600">
-                        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">End date</span>
-                        <input
-                          type="date"
-                          value={dateDraft.endDate}
-                          onChange={(event) => setDateDraft((value) => ({ ...value, endDate: event.target.value }))}
-                          className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleSaveProjectDates}
-                        disabled={savingDates}
-                        className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {savingDates ? "Saving..." : "Save"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {selectedProject ? (
@@ -618,13 +714,13 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
 
                 <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
                   <div className="space-y-6">
-                    <TaskForm projectId={selectedProject.id} onAdded={handleTaskAdded} />
+                    <TaskForm projectId={selectedProject.id} tasks={tasks} onAdded={handleTaskAdded} />
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <div className="flex items-start gap-3 text-slate-900">
                         <div className="rounded-2xl bg-slate-900 p-3 text-white">
                           <BarChart3 className="w-4 h-4" />
                         </div>
-                        <div>
+                        <div className="flex-1">
                           <p className="text-sm font-semibold">Timeline guidance</p>
                           <p className="mt-1 text-sm text-slate-600">
                             {projectTimeline.warning ?? "Add a start and end date to review whether the planned window still fits the task estimates."}
@@ -634,6 +730,21 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                               Suggested end date: <span className="font-semibold text-slate-900">{formatDateLabel(projectTimeline.suggestedEndDate)}</span>
                             </p>
                           )}
+                          <form className="mt-4 flex flex-col gap-2 sm:flex-row" onSubmit={handleUpdateDeadline}>
+                            <input
+                              type="date"
+                              value={projectDeadlineInput}
+                              onChange={(event) => setProjectDeadlineInput(event.target.value)}
+                              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                            />
+                            <button
+                              type="submit"
+                              disabled={updatingDeadline}
+                              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {updatingDeadline ? "Updating…" : "Update deadline"}
+                            </button>
+                          </form>
                         </div>
                       </div>
                     </div>
@@ -642,10 +753,10 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
                   <div className="space-y-6">
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <p className="text-sm font-semibold text-slate-900">Overview</p>
-                      <p className="mt-2 text-sm text-slate-500">Tasks are saved to your backend and may be loaded on refresh.</p>
+                      <p className="mt-2 text-sm text-slate-500">Stages are saved to your backend and may be loaded on refresh.</p>
                     </div>
-                    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"> 
-                      <TaskTable tasks={tasks} onDelete={handleTaskDeleted} />
+                    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                      <TaskTable tasks={tasks} onDelete={handleTaskDeleted} onEdit={handleTaskEdited} onReorder={handleTaskReordered} />
                     </div>
                   </div>
                 </div>
@@ -659,5 +770,6 @@ export default function PertApp({ userEmail, onSignOut }: PertAppProps) {
         </div>
       </div>
     </div>
+    </DndProvider>
   );
 }
