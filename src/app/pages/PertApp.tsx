@@ -6,7 +6,7 @@ import { createProject, createTask, deleteProject, deleteTask, listProjects, lis
 interface PertAppProps {
   userEmail: string;
   onSignOut: () => void;
-  onOpenAIOptimisation: () => void;
+  onOpenAIOptimisation: (project: Project | null, projects: Project[], tasks: Task[]) => void;
 }
 
 function pertCalc(o: number, m: number, p: number) {
@@ -52,7 +52,7 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
       setM("");
       setP("");
       nameRef.current?.focus();
-      toast.success("Task saved");
+      toast.success("Stage saved");
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to save task");
     } finally {
@@ -70,13 +70,13 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
           <Plus className="w-4 h-4" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-slate-900">Add task estimate</p>
-          <p className="text-xs text-slate-500">Save optimistic, most likely, and pessimistic values.</p>
+          <p className="text-sm font-semibold text-slate-900">Add stage estimate</p>
+          <p className="text-xs text-slate-500">Save optimistic, most likely, and pessimistic values for the stage.</p>
         </div>
       </div>
 
       <div className="grid gap-3">
-        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Task name</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stage name</label>
         <input
           ref={nameRef}
           type="text"
@@ -115,7 +115,7 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         disabled={loading || !name.trim() || !o || !m || !p}
         className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {loading ? "Saving..." : "Add task"}
+        {loading ? "Saving..." : "Add stage"}
       </button>
     </form>
   );
@@ -125,7 +125,7 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
   if (tasks.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
-        No tasks yet. Add your first PERT estimate.
+        No stages yet. Add your first PERT estimate.
       </div>
     );
   }
@@ -135,7 +135,7 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
       <table className="min-w-full text-left text-sm">
         <thead className="bg-slate-50 text-slate-500">
           <tr>
-            <th className="px-5 py-3">Task</th>
+            <th className="px-5 py-3">Stage</th>
             <th className="px-4 py-3 text-right">O</th>
             <th className="px-4 py-3 text-right">M</th>
             <th className="px-4 py-3 text-right">P</th>
@@ -393,9 +393,9 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
     try {
       await deleteTask(selectedProjectId, taskId);
       setTasks((prev) => prev.filter((task) => task.id !== taskId));
-      toast.success("Task removed");
+      toast.success("Stage removed");
     } catch (error: any) {
-      toast.error(error?.message ?? "Unable to delete task");
+      toast.error(error?.message ?? "Unable to delete stage");
     }
   };
 
@@ -411,7 +411,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">PERT Calculator</p>
             <h1 className="mt-2 text-3xl font-semibold text-slate-900">Project risk and duration estimates</h1>
-            <p className="mt-2 text-sm text-slate-600">Create projects, add task estimates, and review timeline health with dates and deadline guidance.</p>
+            <p className="mt-2 text-sm text-slate-600">Create projects, add stage estimates, and review timeline health with dates and deadline guidance.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700">
@@ -419,7 +419,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
             </div>
             <button
               type="button"
-              onClick={onOpenAIOptimisation}
+              onClick={() => onOpenAIOptimisation(selectedProject, projects, tasks)}
               className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Open AI optimisation
@@ -443,7 +443,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Projects</p>
-                  <p className="text-xs text-slate-500">Organize calculations by workstream.</p>
+                  <p className="text-xs text-slate-500">Organise calculations by workstream.</p>
                 </div>
               </div>
               <form className="mt-5 space-y-3" onSubmit={handleAddProject}>
@@ -551,7 +551,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                   )}
                 </div>
                 <div className="rounded-3xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  {tasks.length} task{tasks.length === 1 ? "" : "s"}
+                  {tasks.length} stage{tasks.length === 1 ? "" : "s"}
                 </div>
               </div>
             </div>
@@ -614,7 +614,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                   <div className="space-y-6">
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <p className="text-sm font-semibold text-slate-900">Overview</p>
-                      <p className="mt-2 text-sm text-slate-500">Tasks are saved to your backend and may be loaded on refresh.</p>
+                      <p className="mt-2 text-sm text-slate-500">Stages are saved to your backend and may be loaded on refresh.</p>
                     </div>
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <TaskTable tasks={tasks} onDelete={handleTaskDeleted} />

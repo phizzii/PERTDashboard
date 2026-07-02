@@ -97,6 +97,21 @@ export interface BackendReadRootResponse {
   api_key: boolean;
 }
 
+export interface OptimisationSummary {
+  projectName: string;
+  completionLikelihood: number;
+  headline: string;
+  explanation: string;
+  chartData: Array<{ day: string; value: number }>;
+  summaryBullets: string[];
+  suggestions: Array<{ label: string; title: string }>;
+  metrics: {
+    expectedTotal: number;
+    varianceTotal: number;
+    plannedDays: number | null;
+  };
+}
+
 export async function healthCheck() {
   return apiFetch<{ status: string }> ("/health");
 }
@@ -136,6 +151,25 @@ export async function updateProject(projectId: string, updates: { name?: string;
 export async function deleteProject(projectId: string) {
   return apiFetch<{ ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "DELETE",
+  });
+}
+
+export async function getProjectOptimisationSummary(projectId: string) {
+  return apiFetch<OptimisationSummary>(`/api/projects/${encodeURIComponent(projectId)}/optimisation`);
+}
+
+export async function askAIChat(payload: {
+  prompt: string;
+  projectName?: string;
+  selectedStage?: string;
+  completionLikelihood?: number;
+  expectedTotal?: number;
+  varianceTotal?: number;
+  plannedDays?: number | null;
+}) {
+  return apiFetch<{ reply: string; source: string }>('/api/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 

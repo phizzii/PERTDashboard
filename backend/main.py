@@ -1,17 +1,20 @@
 from typing import Any, List
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from uuid import uuid4
 import json
 import os
+import urllib.request
 from pydantic import BaseModel
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "pert.db")
 
 load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 api_key = os.getenv("OPENAI_API_KEY")
 
@@ -233,6 +236,112 @@ def delete_project(project_id: str, request: Request):
     return {"ok": True}
 
 
+@app.get("/api/projects/{project_id}/optimisation")
+def get_project_optimisation(project_id: str, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, start_date AS startDate, end_date AS endDate FROM projects WHERE id = ? AND owner_email = ?", (project_id, user_email))
+    project = cur.fetchone()
+    if not project:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    cur.execute("SELECT optimistic, most_likely AS mostLikely, pessimistic, expected, stddev, variance FROM tasks WHERE project_id = ? AND owner_email = ? ORDER BY created_at ASC", (project_id, user_email))
+    tasks = cur.fetchall()
+    conn.close()
+
+    task_rows = [dict(row) for row in tasks]
+    expected_total = round(sum(float(task["expected"] or 0) for task in task_rows), 2)
+    variance_total = round(sum(float(task["variance"] or 0) for task in task_rows), 3)
+    planned_days = None
+    if project["startDate"] and project["endDate"]:
+        try:
+            start = datetime.fromisoformat(project["startDate"])
+            end = datetime.fromisoformat(project["endDate"])
+            planned_days = max(1, (end - start).days + 1)
+        except ValueError:
+            planned_days = None
+
+    completion_likelihood = 72
+    if planned_days is not None:
+        buffer = planned_days - max(1, round(expected_total))
+        completion_likelihood = max(35, min(95, 78 + buffer * 2))
+    completion_likelihood = max(35, min(95, round(completion_likelihood - max(0, variance_total * 10))))
+
+    base = max(55, completion_likelihood)
+    chart = []
+    if project["startDate"] and project["endDate"]:
+        try:
+            start = datetime.fromisoformat(project["startDate"])
+            end = datetime.fromisoformat(project["endDate"])
+            if (end - start).days <= 14:
+                points = max(1, (end - start).days + 1)
+                labels = [(start + timedelta(days=index)).strftime("%d %b") for index in range(points)]
+            else:
+                points = 0
+                cursor = start
+                labels = []
+                while cursor <= end:
+                    labels.append(cursor.strftime("%d %b"))
+                    cursor += timedelta(days=7)
+                    points += 1
+            for index, day_label in enumerate(labels):
+                wave = [0, 8, 5, -13, 7, 11, 8][index % 7]
+                tail = max(0, index - 3) * 2
+                value = max(55, min(95, round(base + wave + tail - (variance_total * 3))))
+                chart.append({"day": day_label, "value": value})
+        except ValueError:
+            chart = [{"day": "Week commencing", "value": base}]
+    else:
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        for index, day in enumerate(days):
+            wave = [0, 8, 5, -13, 7, 11, 8][index]
+            tail = max(0, index - 3) * 2
+            value = max(55, min(95, round(base + wave + tail - (variance_total * 3))))
+            chart.append({"day": day, "value": value})
+
+    if expected_total <= 0 and task_rows:
+        completion_likelihood = 65
+
+    suggestion_cards = []
+    if planned_days is not None and expected_total > planned_days:
+        suggestion_cards = [
+            {"label": "Scope", "title": "Trim non-critical tasks to bring the plan back inside the deadline."},
+            {"label": "Buffer", "title": "Reallocate slack to risky hand-offs and dependency points."},
+            {"label": "Review", "title": "Revisit the critical path and sequence the highest-variance work first."},
+        ]
+    else:
+        suggestion_cards = [
+            {"label": "Focus", "title": "Keep the current rhythm and protect the critical path."},
+            {"label": "Risk", "title": "Monitor the highest-variance tasks for any drift."},
+            {"label": "Momentum", "title": "Preserve the current delivery buffer for the next milestone."},
+        ]
+
+    summary_bullets = [
+        f"{completion_likelihood}% likelihood of completing this project within the current plan.",
+        f"Expected duration is {expected_total} days with {round(variance_total, 2)} variance across the current task set.",
+    ]
+
+    return {
+        "projectName": project["name"],
+        "completionLikelihood": completion_likelihood,
+        "headline": f"{project['name']} is currently {completion_likelihood}% likely to be completed on time.",
+        "explanation": "This forecast uses the PERT expected durations and variance from the current tasks to estimate how resilient the plan is against the selected deadline.",
+        "chartData": chart,
+        "summaryBullets": summary_bullets,
+        "suggestions": suggestion_cards,
+        "metrics": {
+            "expectedTotal": expected_total,
+            "varianceTotal": variance_total,
+            "plannedDays": planned_days,
+        },
+    }
+
+
 # Tasks
 @app.get("/api/tasks/{project_id}")
 def list_tasks(project_id: str, request: Request):
@@ -295,15 +404,92 @@ def delete_task(project_id: str, task_id: str, request: Request):
     return {"ok": True}
 
 
+class AIChatRequest(BaseModel):
+    prompt: str
+    projectName: str | None = None
+    selectedStage: str | None = None
+    completionLikelihood: int | None = None
+    expectedTotal: float | None = None
+    varianceTotal: float | None = None
+    plannedDays: int | None = None
+
+
+def build_fallback_ai_reply(payload: AIChatRequest) -> str:
+    stage_hint = f" for {payload.selectedStage}" if payload.selectedStage and payload.selectedStage != "Overall plan" else ""
+    project_hint = payload.projectName or "this project"
+
+    actions = []
+    if payload.completionLikelihood is not None:
+        if payload.completionLikelihood < 70:
+            actions.append("tighten the critical path and reduce schedule risk")
+        elif payload.completionLikelihood < 85:
+            actions.append("protect contingency and review the highest-variance stages")
+        else:
+            actions.append("maintain momentum and keep risk monitoring active")
+
+    if payload.expectedTotal is not None and payload.plannedDays is not None and payload.expectedTotal > payload.plannedDays:
+        actions.append(f"bring the plan back inside the {payload.plannedDays}-day deadline")
+    elif payload.expectedTotal is not None:
+        actions.append(f"keep the plan aligned to the expected {payload.expectedTotal}-day duration")
+
+    if payload.varianceTotal is not None and payload.varianceTotal > 5:
+        actions.append("focus on the stages with the greatest uncertainty")
+
+    suggestion = ", ".join(actions) if actions else "review the plan for the next milestone"
+    return (
+        f"For {project_hint}{stage_hint}, the clearest next step is to {suggestion}. "
+        f"The user asked: {payload.prompt}"
+    )
+
+
+def get_ai_reply(payload: AIChatRequest) -> tuple[str, str]:
+    key = os.getenv("OPENAI_API_KEY")
+    if key:
+        try:
+            request_body = {
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful UK English project planning assistant. Keep answers practical, concise, and focused on improving delivery plans.",
+                    },
+                    {"role": "user", "content": payload.prompt},
+                ],
+                "temperature": 0.7,
+                "max_tokens": 120,
+            }
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=json.dumps(request_body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=20) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                if reply:
+                    return reply.strip(), "openai"
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore")
+            print(f"OpenAI HTTP error {exc.code}: {error_body}")
+        except Exception as exc:
+            print(f"OpenAI request failed: {exc}")
+    return build_fallback_ai_reply(payload), "fallback"
+
+
+@app.post("/api/ai/chat")
+def ai_chat(payload: AIChatRequest):
+    if not payload.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt required")
+
+    reply, source = get_ai_reply(payload)
+    return {"reply": reply, "source": source}
+
+
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-
-class PromptRequest(BaseModel):
-    prompt: str
-    max_tokens: int = 100
-    temperature: float = 0.7
-    top_p: float = 1.0
-    n: int = 1
-    stop: List[str] = None
