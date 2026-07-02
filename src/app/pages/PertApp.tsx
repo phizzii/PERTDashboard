@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DndProvider, useDrag, useDrop } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
 import { ArrowLeft, BarChart3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, updateProject } from "../api";
+import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, updateProject, updateTask } from "../api";
 
 interface PertAppProps {
   userEmail: string;
@@ -19,11 +21,12 @@ function pertCalc(o: number, m: number, p: number) {
   };
 }
 
-function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: Task) => void }) {
+function TaskForm({ projectId, tasks, onAdded }: { projectId: string; tasks: Task[]; onAdded: (task: Task) => void }) {
   const [name, setName] = useState("");
   const [o, setO] = useState("");
   const [m, setM] = useState("");
   const [p, setP] = useState("");
+  const [dependencyId, setDependencyId] = useState("");
   const [loading, setLoading] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
 
@@ -45,12 +48,14 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         optimistic: oN,
         mostLikely: mN,
         pessimistic: pN,
+        dependencyId: dependencyId || null,
       });
       onAdded(task);
       setName("");
       setO("");
       setM("");
       setP("");
+      setDependencyId("");
       nameRef.current?.focus();
       toast.success("Stage saved");
     } catch (error: any) {
@@ -88,7 +93,7 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         {[
           { label: "Optimistic", value: o, setter: setO, ring: "focus:ring-emerald-500/30" },
           { label: "Most Likely", value: m, setter: setM, ring: "focus:ring-blue-500/30" },
@@ -110,6 +115,32 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
         ))}
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dependency</label>
+          <select
+            value={dependencyId}
+            onChange={(event) => setDependencyId(event.target.value)}
+            className={inputClass}
+          >
+            <option value="">No dependency</option>
+            {tasks
+              .filter((task) => task.id !== "")
+              .map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.name}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Stage order</label>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Added after the current list order
+          </div>
+        </div>
+      </div>
+
       <button
         type="submit"
         disabled={loading || !name.trim() || !o || !m || !p}
@@ -121,7 +152,84 @@ function TaskForm({ projectId, onAdded }: { projectId: string; onAdded: (task: T
   );
 }
 
-function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: string) => void }) {
+function DraggableStageRow({ task, index, tasks, onDelete, onEdit, onReorder }: { task: Task; index: number; tasks: Task[]; onDelete: (taskId: string) => void; onEdit: (taskId: string, updates: Partial<Task>) => void; onReorder: (taskId: string, direction: "up" | "down") => void }) {
+  const [, drag] = useDrag(() => ({
+    type: "stage",
+    item: { id: task.id, index },
+  }));
+
+  const [, drop] = useDrop(() => ({
+    accept: "stage",
+    hover: (item: { id: string; index: number }) => {
+      if (item.id !== task.id) {
+        onReorder(item.id, item.index < index ? "up" : "down");
+      }
+    },
+  }));
+
+  return (
+    <tr ref={(node) => drag(drop(node))} className="hover:bg-slate-50 transition-colors">
+      <td className="px-5 py-3 font-medium text-slate-900">
+        <div className="flex flex-col gap-1">
+          <span>{task.name}</span>
+          {task.dependencyId && (
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Depends on {tasks.find((candidate) => candidate.id === task.dependencyId)?.name ?? "another stage"}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.optimistic}
+          onChange={(event) => onEdit(task.id, { optimistic: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.mostLikely}
+          onChange={(event) => onEdit(task.id, { mostLikely: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-2 py-3 text-right text-slate-700">
+        <input
+          type="number"
+          min="0"
+          step="any"
+          value={task.pessimistic}
+          onChange={(event) => onEdit(task.id, { pessimistic: Number(event.target.value) })}
+          className="w-16 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-right text-sm"
+        />
+      </td>
+      <td className="px-4 py-3 text-right font-semibold text-slate-900">{task.expected}</td>
+      <td className="px-4 py-3 text-right text-slate-700">{task.stdDev}</td>
+      <td className="px-4 py-3 text-right text-slate-700">{task.variance}</td>
+      <td className="px-4 py-3 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={() => onReorder(task.id, "up")} disabled={index === 0} className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">↑</button>
+          <button type="button" onClick={() => onReorder(task.id, "down")} disabled={index === tasks.length - 1} className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">↓</button>
+          <button
+            type="button"
+            onClick={() => onDelete(task.id)}
+            className="text-slate-400 transition hover:text-rose-500"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function TaskTable({ tasks, onDelete, onEdit, onReorder }: { tasks: Task[]; onDelete: (taskId: string) => void; onEdit: (taskId: string, updates: Partial<Task>) => void; onReorder: (taskId: string, direction: "up" | "down") => void }) {
   if (tasks.length === 0) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
@@ -146,25 +254,8 @@ function TaskTable({ tasks, onDelete }: { tasks: Task[]; onDelete: (taskId: stri
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {tasks.map((task) => (
-            <tr key={task.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-5 py-3 font-medium text-slate-900">{task.name}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.optimistic}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.mostLikely}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.pessimistic}</td>
-              <td className="px-4 py-3 text-right font-semibold text-slate-900">{task.expected}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.stdDev}</td>
-              <td className="px-4 py-3 text-right text-slate-700">{task.variance}</td>
-              <td className="px-4 py-3 text-right">
-                <button
-                  type="button"
-                  onClick={() => onDelete(task.id)}
-                  className="text-slate-400 transition hover:text-rose-500"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </td>
-            </tr>
+          {tasks.map((task, index) => (
+            <DraggableStageRow key={task.id} task={task} index={index} tasks={tasks} onDelete={onDelete} onEdit={onEdit} onReorder={onReorder} />
           ))}
         </tbody>
       </table>
@@ -258,6 +349,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectDeadlineInput, setProjectDeadlineInput] = useState("");
   const [updatingDeadline, setUpdatingDeadline] = useState(false);
+  const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
 
@@ -388,6 +480,30 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
 
   const handleTaskAdded = (task: Task) => setTasks((prev) => [...prev, task]);
 
+  const handleTaskEdited = async (taskId: string, updates: Partial<Task>) => {
+    if (!selectedProjectId) return;
+
+    const nextTask = tasks.find((task) => task.id === taskId);
+    if (!nextTask) return;
+
+    try {
+      setUpdatingTaskId(taskId);
+      const updated = await updateTask(selectedProjectId, taskId, {
+        name: updates.name,
+        optimistic: updates.optimistic,
+        mostLikely: updates.mostLikely,
+        pessimistic: updates.pessimistic,
+        dependencyId: updates.dependencyId,
+      });
+
+      setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...updated, expected: updated.expected, stdDev: updated.stdDev, variance: updated.variance } : task)));
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to update stage");
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  };
+
   const handleTaskDeleted = async (taskId: string) => {
     if (!selectedProjectId) return;
     try {
@@ -399,12 +515,35 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
     }
   };
 
+  const handleTaskReordered = async (taskId: string, direction: "up" | "down") => {
+    if (!selectedProjectId) return;
+
+    const currentIndex = tasks.findIndex((task) => task.id === taskId);
+    if (currentIndex < 0) return;
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= tasks.length) return;
+
+    const nextTasks = [...tasks];
+    const [movedTask] = nextTasks.splice(currentIndex, 1);
+    nextTasks.splice(targetIndex, 0, movedTask);
+
+    setTasks(nextTasks);
+
+    try {
+      await Promise.all(nextTasks.map((task, index) => updateTask(selectedProjectId, task.id, { sortOrder: index + 1 })));
+    } catch (error: any) {
+      toast.error(error?.message ?? "Unable to reorder stages");
+    }
+  };
+
   const handleSignOut = () => {
     window.localStorage.removeItem("pert-user-email");
     onSignOut();
   };
 
   return (
+    <DndProvider backend={HTML5Backend}>
     <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900" style={{ minHeight: "var(--app-height, 100vh)" }}>
       <div className="mx-auto max-w-7xl p-6">
         <header className="flex flex-col gap-4 rounded-3xl bg-white border border-slate-200 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
@@ -575,7 +714,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
 
                 <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
                   <div className="space-y-6">
-                    <TaskForm projectId={selectedProject.id} onAdded={handleTaskAdded} />
+                    <TaskForm projectId={selectedProject.id} tasks={tasks} onAdded={handleTaskAdded} />
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                       <div className="flex items-start gap-3 text-slate-900">
                         <div className="rounded-2xl bg-slate-900 p-3 text-white">
@@ -617,7 +756,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                       <p className="mt-2 text-sm text-slate-500">Stages are saved to your backend and may be loaded on refresh.</p>
                     </div>
                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                      <TaskTable tasks={tasks} onDelete={handleTaskDeleted} />
+                      <TaskTable tasks={tasks} onDelete={handleTaskDeleted} onEdit={handleTaskEdited} onReorder={handleTaskReordered} />
                     </div>
                   </div>
                 </div>
@@ -631,5 +770,6 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
         </div>
       </div>
     </div>
+    </DndProvider>
   );
 }

@@ -238,8 +238,8 @@ export default function Landing({ onGetStarted }: LandingProps) {
         </button>
 
         {/* App title */}
-        <div className="flex items-center gap-2">
-          <img src={logo} alt="PERT Optimiser logo" className="h-8 w-8 rounded-xl object-cover" />
+        <div className="flex items-center gap-3 ml-4">
+          <img src={logo} alt="PERT Optimiser logo" className="h-10 w-10 rounded-2xl object-cover" />
           <span className="font-semibold text-base tracking-tight" style={{ color: "#1b2a4a" }}>
             PERT Optimiser
           </span>
@@ -270,16 +270,19 @@ export default function Landing({ onGetStarted }: LandingProps) {
       {/* ── Main content ── */}
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-8 flex flex-col gap-4 overflow-auto">
         {/* Heading */}
-        <div className="mb-2">
-          <h1
-            className="font-bold leading-tight"
-            style={{ fontSize: 28, color: "#1b2a4a", letterSpacing: "-0.5px" }}
-          >
-            Welcome back, User
-          </h1>
-          <p className="mt-1 text-sm" style={{ color: "#636e72" }}>
-            Continue managing your project schedules.
-          </p>
+        <div className="mb-2 flex items-start gap-3 rounded-3xl border border-slate-200/80 bg-white/80 p-4 shadow-sm">
+          <img src={logo} alt="PERT Optimiser logo" className="h-12 w-12 rounded-2xl object-cover" />
+          <div>
+            <h1
+              className="font-bold leading-tight"
+              style={{ fontSize: 28, color: "#1b2a4a", letterSpacing: "-0.5px" }}
+            >
+              Welcome back, User
+            </h1>
+            <p className="mt-1 text-sm" style={{ color: "#636e72" }}>
+              Continue managing your project schedules.
+            </p>
+          </div>
         </div>
 
         {/* Section label */}

@@ -52,6 +52,8 @@ export interface Task {
   stdDev: number;
   variance: number;
   createdAt: string;
+  dependencyId?: string | null;
+  sortOrder?: number;
 }
 
 interface BackendTask {
@@ -68,6 +70,10 @@ interface BackendTask {
   variance: number;
   created_at: string;
   createdAt?: string;
+  dependency_id?: string | null;
+  dependencyId?: string | null;
+  position?: number | null;
+  sortOrder?: number | null;
 }
 
 function normalizeTask(task: BackendTask): Task {
@@ -82,6 +88,8 @@ function normalizeTask(task: BackendTask): Task {
     stdDev: task.stddev,
     variance: task.variance,
     createdAt: task.createdAt ?? task.created_at,
+    dependencyId: task.dependencyId ?? task.dependency_id ?? null,
+    sortOrder: task.sortOrder ?? task.position ?? undefined,
   };
 }
 
@@ -183,9 +191,25 @@ export async function createTask(projectId: string, payload: {
   optimistic: number;
   mostLikely: number;
   pessimistic: number;
+  dependencyId?: string | null;
 }) {
   const backendTask = await apiFetch<BackendTask>(`/api/tasks/${encodeURIComponent(projectId)}`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return normalizeTask(backendTask);
+}
+
+export async function updateTask(projectId: string, taskId: string, payload: {
+  name?: string;
+  optimistic?: number;
+  mostLikely?: number;
+  pessimistic?: number;
+  dependencyId?: string | null;
+  sortOrder?: number | null;
+}) {
+  const backendTask = await apiFetch<BackendTask>(`/api/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
   return normalizeTask(backendTask);

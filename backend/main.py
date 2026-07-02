@@ -50,13 +50,18 @@ def init_db():
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
       optimistic REAL, most_likely REAL, pessimistic REAL,
-      expected REAL, stddev REAL, variance REAL, created_at TEXT, owner_email TEXT
+      expected REAL, stddev REAL, variance REAL, created_at TEXT, owner_email TEXT,
+      dependency_id TEXT, position INTEGER
     );
     """)
     cur.execute("PRAGMA table_info(tasks)")
     task_columns = {row[1] for row in cur.fetchall()}
     if "owner_email" not in task_columns:
         cur.execute("ALTER TABLE tasks ADD COLUMN owner_email TEXT")
+    if "dependency_id" not in task_columns:
+        cur.execute("ALTER TABLE tasks ADD COLUMN dependency_id TEXT")
+    if "position" not in task_columns:
+        cur.execute("ALTER TABLE tasks ADD COLUMN position INTEGER")
     conn.commit()
     conn.close()
 
@@ -350,10 +355,27 @@ def list_tasks(project_id: str, request: Request):
         return []
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM tasks WHERE project_id = ? AND owner_email = ? ORDER BY created_at ASC", (project_id, user_email))
+    cur.execute("SELECT id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, owner_email, dependency_id, position FROM tasks WHERE project_id = ? AND owner_email = ? ORDER BY position ASC, created_at ASC", (project_id, user_email))
     rows = cur.fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [
+        {
+            "id": row["id"],
+            "projectId": row["project_id"],
+            "name": row["name"],
+            "optimistic": row["optimistic"],
+            "mostLikely": row["most_likely"],
+            "pessimistic": row["pessimistic"],
+            "expected": row["expected"],
+            "stddev": row["stddev"],
+            "variance": row["variance"],
+            "createdAt": row["created_at"],
+            "ownerEmail": row["owner_email"],
+            "dependencyId": row["dependency_id"],
+            "sortOrder": row["position"],
+        }
+        for row in rows
+    ]
 
 
 @app.post("/api/tasks/{project_id}")
@@ -375,6 +397,7 @@ def create_task(project_id: str, payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Invalid numeric values")
     if not (o <= m <= p):
         raise HTTPException(status_code=400, detail="Values must satisfy O ≤ M ≤ P")
+    dependency_id = payload.get("dependencyId") or payload.get("dependency_id")
     expected = (o + 4 * m + p) / 6
     stddev = (p - o) / 6
     variance = stddev ** 2
@@ -382,13 +405,111 @@ def create_task(project_id: str, payload: dict, request: Request):
     created_at = __import__("datetime").datetime.utcnow().isoformat()
     conn = get_db_conn()
     cur = conn.cursor()
+    if dependency_id:
+        cur.execute("SELECT id FROM tasks WHERE id = ? AND project_id = ? AND owner_email = ?", (dependency_id, project_id, user_email))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Dependency stage not found")
+    cur.execute("SELECT COALESCE(MAX(position), 0) + 1 FROM tasks WHERE project_id = ? AND owner_email = ?", (project_id, user_email))
+    next_position = cur.fetchone()[0] or 1
     cur.execute(
-        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, owner_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at, user_email),
+        "INSERT INTO tasks (id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, owner_email, dependency_id, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tid, project_id, name.strip(), o, m, p, round(expected, 3), round(stddev, 3), round(variance, 3), created_at, user_email, dependency_id, next_position),
     )
     conn.commit()
     conn.close()
-    return {"id": tid, "projectId": project_id, "name": name.strip(), "optimistic": o, "mostLikely": m, "pessimistic": p, "expected": round(expected, 3), "stddev": round(stddev, 3), "variance": round(variance, 3), "createdAt": created_at, "ownerEmail": user_email}
+    return {"id": tid, "projectId": project_id, "name": name.strip(), "optimistic": o, "mostLikely": m, "pessimistic": p, "expected": round(expected, 3), "stddev": round(stddev, 3), "variance": round(variance, 3), "createdAt": created_at, "ownerEmail": user_email, "dependencyId": dependency_id, "sortOrder": next_position}
+
+
+@app.patch("/api/tasks/{project_id}/{task_id}")
+def update_task(project_id: str, task_id: str, payload: dict, request: Request):
+    user_email = get_user_email(request)
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email required")
+    if not payload:
+        raise HTTPException(status_code=400, detail="No updates supplied")
+
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, dependency_id, position FROM tasks WHERE id = ? AND project_id = ? AND owner_email = ?", (task_id, project_id, user_email))
+    existing = cur.fetchone()
+    if not existing:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Stage not found")
+
+    updates: List[str] = []
+    values: List[Any] = []
+
+    if "name" in payload and payload.get("name") is not None:
+        name = payload.get("name")
+        if not name or not str(name).strip():
+            conn.close()
+            raise HTTPException(status_code=400, detail="Task name required")
+        updates.append("name = ?")
+        values.append(str(name).strip())
+
+    optimistic = existing["optimistic"]
+    most_likely = existing["most_likely"]
+    pessimistic = existing["pessimistic"]
+
+    if "optimistic" in payload and payload.get("optimistic") is not None:
+        optimistic = float(payload.get("optimistic"))
+    if "mostLikely" in payload and payload.get("mostLikely") is not None:
+        most_likely = float(payload.get("mostLikely"))
+    if "most_likely" in payload and payload.get("most_likely") is not None:
+        most_likely = float(payload.get("most_likely"))
+    if "pessimistic" in payload and payload.get("pessimistic") is not None:
+        pessimistic = float(payload.get("pessimistic"))
+
+    if "optimistic" in payload or "mostLikely" in payload or "most_likely" in payload or "pessimistic" in payload:
+        if not (optimistic <= most_likely <= pessimistic):
+            conn.close()
+            raise HTTPException(status_code=400, detail="Values must satisfy O ≤ M ≤ P")
+        expected = (optimistic + 4 * most_likely + pessimistic) / 6
+        stddev = (pessimistic - optimistic) / 6
+        variance = stddev ** 2
+        updates.extend(["optimistic = ?", "most_likely = ?", "pessimistic = ?", "expected = ?", "stddev = ?", "variance = ?"])
+        values.extend([optimistic, most_likely, pessimistic, round(expected, 3), round(stddev, 3), round(variance, 3)])
+
+    if "dependencyId" in payload or "dependency_id" in payload:
+        dependency_id = payload.get("dependencyId") or payload.get("dependency_id")
+        if dependency_id:
+            cur.execute("SELECT id FROM tasks WHERE id = ? AND project_id = ? AND owner_email = ?", (dependency_id, project_id, user_email))
+            if not cur.fetchone():
+                conn.close()
+                raise HTTPException(status_code=404, detail="Dependency stage not found")
+        updates.append("dependency_id = ?")
+        values.append(dependency_id)
+
+    if "sortOrder" in payload or "position" in payload:
+        updates.append("position = ?")
+        values.append(payload.get("sortOrder", payload.get("position")))
+
+    if not updates:
+        conn.close()
+        raise HTTPException(status_code=400, detail="No updates supplied")
+
+    query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ? AND project_id = ? AND owner_email = ?"
+    cur.execute(query, values + [task_id, project_id, user_email])
+    conn.commit()
+    cur.execute("SELECT id, project_id, name, optimistic, most_likely, pessimistic, expected, stddev, variance, created_at, owner_email, dependency_id, position FROM tasks WHERE id = ? AND project_id = ? AND owner_email = ?", (task_id, project_id, user_email))
+    row = cur.fetchone()
+    conn.close()
+    return {
+        "id": row["id"],
+        "projectId": row["project_id"],
+        "name": row["name"],
+        "optimistic": row["optimistic"],
+        "mostLikely": row["most_likely"],
+        "pessimistic": row["pessimistic"],
+        "expected": row["expected"],
+        "stddev": row["stddev"],
+        "variance": row["variance"],
+        "createdAt": row["created_at"],
+        "ownerEmail": row["owner_email"],
+        "dependencyId": row["dependency_id"],
+        "sortOrder": row["position"],
+    }
 
 
 @app.delete("/api/tasks/{project_id}/{task_id}")
@@ -414,32 +535,9 @@ class AIChatRequest(BaseModel):
     plannedDays: int | None = None
 
 
-def build_fallback_ai_reply(payload: AIChatRequest) -> str:
-    stage_hint = f" for {payload.selectedStage}" if payload.selectedStage and payload.selectedStage != "Overall plan" else ""
-    project_hint = payload.projectName or "this project"
-
-    actions = []
-    if payload.completionLikelihood is not None:
-        if payload.completionLikelihood < 70:
-            actions.append("tighten the critical path and reduce schedule risk")
-        elif payload.completionLikelihood < 85:
-            actions.append("protect contingency and review the highest-variance stages")
-        else:
-            actions.append("maintain momentum and keep risk monitoring active")
-
-    if payload.expectedTotal is not None and payload.plannedDays is not None and payload.expectedTotal > payload.plannedDays:
-        actions.append(f"bring the plan back inside the {payload.plannedDays}-day deadline")
-    elif payload.expectedTotal is not None:
-        actions.append(f"keep the plan aligned to the expected {payload.expectedTotal}-day duration")
-
-    if payload.varianceTotal is not None and payload.varianceTotal > 5:
-        actions.append("focus on the stages with the greatest uncertainty")
-
-    suggestion = ", ".join(actions) if actions else "review the plan for the next milestone"
-    return (
-        f"For {project_hint}{stage_hint}, the clearest next step is to {suggestion}. "
-        f"The user asked: {payload.prompt}"
-    )
+def build_fallback_ai_reply(payload: AIChatRequest, status_code: int | None = None) -> str:
+    status_suffix = f" ({status_code})" if status_code is not None else ""
+    return f"Uh oh{status_suffix} — this isn't working as it should right now. We'll be right on it. Please come back later!"
 
 
 def get_ai_reply(payload: AIChatRequest) -> tuple[str, str]:

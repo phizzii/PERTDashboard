@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import logo from "../../images/logo.png";
 import { askAIChat, getProjectOptimisationSummary, OptimisationSummary, Project, Task } from "../api";
-import { buildChatPrompt, buildForecastReasoningPrompt, buildSuggestionPrompt } from "../ai/prompts";
+import { buildAssessmentPrompt, buildChatPrompt, buildForecastReasoningPrompt, buildStageImprovementPrompt, buildStageSolutionPrompt, buildSuggestionPrompt } from "../ai/prompts";
 
 type ChatMessage = { role: "user" | "assistant"; content: string; files?: string[]; apiPrompt?: string };
 
@@ -22,7 +22,7 @@ function DashboardHeader({ onBack, projectName }: { onBack: () => void; projectN
     <div className="flex flex-col gap-5 border-b border-slate-700/70 pb-6 sm:flex-row sm:items-start sm:justify-between">
       <div className="space-y-3">
         <div className="flex items-center gap-3">
-          <img src={logo} alt="PERT Optimiser logo" className="h-11 w-11 rounded-2xl object-cover" />
+          <img src={logo} alt="PERT Optimiser logo" className="h-14 w-14 rounded-2xl object-cover" />
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">PERT Optimiser</p>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-100 sm:text-4xl">
@@ -44,7 +44,7 @@ function DashboardHeader({ onBack, projectName }: { onBack: () => void; projectN
   );
 }
 
-function InsightCard({ title, body, buttonLabel }: { title: string; body: string; buttonLabel: string }) {
+function InsightCard({ title, body, buttonLabel, onAction, resultText, isLoading }: { title: string; body: string; buttonLabel: string; onAction: () => void; resultText?: string; isLoading?: boolean }) {
   return (
     <div className="rounded-3xl border border-emerald-400/20 bg-emerald-500/10 p-5 shadow-[0_12px_35px_rgba(22,163,74,0.08)]">
       <div className="flex items-start justify-between gap-3">
@@ -58,10 +58,13 @@ function InsightCard({ title, body, buttonLabel }: { title: string; body: string
       <p className="mt-4 text-sm leading-6 text-emerald-50/90">{body}</p>
       <button
         type="button"
-        className="mt-5 rounded-full bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 transition hover:bg-emerald-50"
+        onClick={onAction}
+        disabled={isLoading}
+        className="mt-5 rounded-full bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {buttonLabel}
+        {isLoading ? "Working…" : buttonLabel}
       </button>
+      {resultText && <p className="mt-4 rounded-2xl border border-white/20 bg-slate-950/20 p-3 text-sm leading-6 text-emerald-50/90">{resultText}</p>}
     </div>
   );
 }
@@ -177,7 +180,7 @@ function StageSelector({ stages, value, onChange }: { stages: string[]; value: s
   );
 }
 
-function SuggestionCard({ label, title, onOptimise }: { label: string; title: string; onOptimise: () => void }) {
+function SuggestionCard({ label, title, onOptimise, resultText, isLoading }: { label: string; title: string; onOptimise: () => void; resultText?: string; isLoading?: boolean }) {
   return (
     <div className="rounded-[24px] border border-rose-400/20 bg-rose-500/10 p-5 shadow-[0_14px_30px_rgba(244,114,182,0.08)]">
       <div className="flex items-start justify-between gap-3">
@@ -189,9 +192,10 @@ function SuggestionCard({ label, title, onOptimise }: { label: string; title: st
         </button>
       </div>
       <p className="mt-10 text-sm font-semibold text-rose-50">{title}</p>
-      <button type="button" onClick={onOptimise} className="mt-4 rounded-full bg-white/90 px-3.5 py-2 text-sm font-semibold text-slate-800 transition hover:bg-white">
-        Optimise me
+      <button type="button" onClick={onOptimise} disabled={isLoading} className="mt-4 rounded-full bg-white/90 px-3.5 py-2 text-sm font-semibold text-slate-800 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60">
+        {isLoading ? "Working…" : "Optimise me"}
       </button>
+      {resultText && <p className="mt-4 rounded-2xl border border-white/20 bg-slate-950/20 p-3 text-sm leading-6 text-rose-50/90">{resultText}</p>}
     </div>
   );
 }
@@ -296,6 +300,14 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
   const [thinking, setThinking] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedStage, setSelectedStage] = useState("Overall plan");
+  const [actionResults, setActionResults] = useState<Record<string, string>>({});
+  const [loadingActionKey, setLoadingActionKey] = useState<string | null>(null);
+  const [improvementCards, setImprovementCards] = useState<Array<{ title: string; bullets: string[]; solution?: string; loading?: boolean }>>([
+    { title: "Improvement point 1", bullets: [] },
+    { title: "Improvement point 2", bullets: [] },
+    { title: "Improvement point 3", bullets: [] },
+  ]);
+  const [generatingImprovements, setGeneratingImprovements] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -328,6 +340,95 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
       setSelectedStage(stageNames[0]);
     }
   }, [tasks, selectedStage]);
+
+  const runPredefinedAction = async (key: string, prompt: string) => {
+    setLoadingActionKey(key);
+    try {
+      const response = await askAIChat({
+        prompt,
+        projectName: projectName || undefined,
+        selectedStage,
+        completionLikelihood: optimisation?.completionLikelihood,
+        expectedTotal: optimisation?.metrics.expectedTotal,
+        varianceTotal: optimisation?.metrics.varianceTotal,
+        plannedDays: optimisation?.metrics.plannedDays,
+      });
+      setActionResults((current) => ({ ...current, [key]: response.reply || "I’m ready to help refine the plan." }));
+    } catch {
+      setActionResults((current) => ({ ...current, [key]: "I’m not able to reach the AI service right now, so I couldn’t generate a recommendation." }));
+    } finally {
+      setLoadingActionKey(null);
+    }
+  };
+
+  const parseImprovementPoints = (text: string) => {
+    const cleaned = text
+      .split(/\n+/)
+      .map((entry) => entry.replace(/^[-*•]\s*/, "").replace(/^\d+[.)]\s*/, "").trim())
+      .filter(Boolean);
+
+    const bullets = cleaned.slice(0, 3);
+    return bullets.length > 0 ? bullets : ["Review the stage estimate and reserve contingency for the riskiest hand-offs."];
+  };
+
+  const generateImprovementCards = async () => {
+    setGeneratingImprovements(true);
+    try {
+      const response = await askAIChat({
+        prompt: buildStageImprovementPrompt({
+          projectName: projectName || "this project",
+          completionLikelihood: optimisation?.completionLikelihood,
+          plannedDays: optimisation?.metrics.plannedDays,
+          expectedTotal: optimisation?.metrics.expectedTotal,
+          varianceTotal: optimisation?.metrics.varianceTotal,
+          selectedStage,
+          stageEstimate: selectedTaskEstimate,
+        }),
+        projectName: projectName || undefined,
+        selectedStage,
+        completionLikelihood: optimisation?.completionLikelihood,
+        expectedTotal: optimisation?.metrics.expectedTotal,
+        varianceTotal: optimisation?.metrics.varianceTotal,
+        plannedDays: optimisation?.metrics.plannedDays,
+      });
+      const bullets = parseImprovementPoints(response.reply || "");
+      setImprovementCards(bullets.map((text, index) => ({ title: `Improvement point ${index + 1}`, bullets: [text] })));
+    } catch {
+      setImprovementCards([
+        { title: "Improvement point 1", bullets: ["Review the stage estimate and reserve contingency for the riskiest hand-offs."] },
+        { title: "Improvement point 2", bullets: ["Clarify the delivery sequence so dependencies create less rework."] },
+        { title: "Improvement point 3", bullets: ["Protect the critical path with a short review checkpoint before the next milestone."] },
+      ]);
+    } finally {
+      setGeneratingImprovements(false);
+    }
+  };
+
+  const optimiseImprovementCard = async (index: number, bullet: string) => {
+    setImprovementCards((current) => current.map((card, cardIndex) => cardIndex === index ? { ...card, loading: true } : card));
+    try {
+      const response = await askAIChat({
+        prompt: buildStageSolutionPrompt({
+          projectName: projectName || "this project",
+          completionLikelihood: optimisation?.completionLikelihood,
+          plannedDays: optimisation?.metrics.plannedDays,
+          expectedTotal: optimisation?.metrics.expectedTotal,
+          varianceTotal: optimisation?.metrics.varianceTotal,
+          selectedStage,
+          stageEstimate: selectedTaskEstimate,
+        }, bullet),
+        projectName: projectName || undefined,
+        selectedStage,
+        completionLikelihood: optimisation?.completionLikelihood,
+        expectedTotal: optimisation?.metrics.expectedTotal,
+        varianceTotal: optimisation?.metrics.varianceTotal,
+        plannedDays: optimisation?.metrics.plannedDays,
+      });
+      setImprovementCards((current) => current.map((card, cardIndex) => cardIndex === index ? { ...card, loading: false, solution: response.reply || "A practical next step is ready to review." } : card));
+    } catch {
+      setImprovementCards((current) => current.map((card, cardIndex) => cardIndex === index ? { ...card, loading: false, solution: "The AI service is unavailable right now, so the recommended solution couldn’t be generated." } : card));
+    }
+  };
 
   const handleSendMessage = async (prompt: string, files: File[]) => {
     const cleanedPrompt = prompt.trim() || (files.length > 0 ? "Please review the attached files and help me improve this plan." : "Please help me improve this plan.");
@@ -424,6 +525,18 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
     return names.length > 0 ? names : ["Overall plan"];
   }, [tasks]);
 
+  const selectedTaskEstimate = useMemo(() => {
+    const selectedTask = tasks.find((task) => task.name.trim() === selectedStage);
+    if (!selectedTask) {
+      return null;
+    }
+    return {
+      optimistic: selectedTask.optimistic,
+      mostLikely: selectedTask.mostLikely,
+      pessimistic: selectedTask.pessimistic,
+    };
+  }, [selectedStage, tasks]);
+
   return (
     <div className="min-h-screen bg-[#07111f] px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 rounded-[36px] border border-slate-800/80 bg-[#0b1a2f] p-6 shadow-[0_20px_70px_rgba(2,8,23,0.45)] sm:p-8 lg:p-10">
@@ -434,7 +547,26 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
           <div className="grid gap-4 xl:grid-cols-[1.4fr_0.55fr]">
             <div className="grid gap-4 md:grid-cols-3">
               {insightCards.map((card) => (
-                <InsightCard key={card.title} title={card.title} body={card.body} buttonLabel={card.buttonLabel} />
+                <InsightCard
+                  key={card.title}
+                  title={card.title}
+                  body={card.body}
+                  buttonLabel={card.buttonLabel}
+                  onAction={() => {
+                    const actionKey = `insight-${card.buttonLabel.toLowerCase()}`;
+                    void runPredefinedAction(actionKey, buildAssessmentPrompt({
+                      projectName: projectName || "this project",
+                      completionLikelihood: optimisation?.completionLikelihood,
+                      plannedDays: optimisation?.metrics.plannedDays,
+                      expectedTotal: optimisation?.metrics.expectedTotal,
+                      varianceTotal: optimisation?.metrics.varianceTotal,
+                      selectedStage,
+                      stageEstimate: selectedTaskEstimate,
+                    }, card.buttonLabel.toLowerCase() as "review" | "inspect" | "assess"));
+                  }}
+                  resultText={actionResults[`insight-${card.buttonLabel.toLowerCase()}`]}
+                  isLoading={loadingActionKey === `insight-${card.buttonLabel.toLowerCase()}`}
+                />
               ))}
             </div>
             <ProjectSwitcher projects={projects} activeProjectName={projectName} onSelectProject={(project) => onSelectProject?.(project)} />
@@ -457,20 +589,31 @@ export default function AIOptimisationPage({ onBack, projectId, projectName, pro
 
         <section className="flex flex-col gap-4 rounded-[28px] border border-slate-700/70 bg-slate-900/50 p-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-2xl font-semibold text-slate-100">Optimisation Suggestions</h2>
+            <h2 className="text-2xl font-semibold text-slate-100">What could be better for this stage?</h2>
+            <p className="mt-1 text-sm text-slate-400">Generate three improvement ideas for the selected stage and then optimise each one.</p>
           </div>
-          <StageSelector stages={stageNames} value={selectedStage} onChange={setSelectedStage} />
+          <div className="flex flex-wrap items-center gap-3">
+            <StageSelector stages={stageNames} value={selectedStage} onChange={setSelectedStage} />
+            <button
+              type="button"
+              onClick={() => void generateImprovementCards()}
+              disabled={generatingImprovements}
+              className="rounded-full bg-rose-500/90 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {generatingImprovements ? "Generating…" : "Generate ideas"}
+            </button>
+          </div>
         </section>
 
         <section className="grid gap-4 md:grid-cols-3">
-          {recommendationCards.map((suggestion) => (
+          {improvementCards.map((card, index) => (
             <SuggestionCard
-              key={`${suggestion.label}-${suggestion.title}`}
-              label={suggestion.label}
-              title={suggestion.title}
-              onOptimise={() => {
-                void handleSendMessage(buildSuggestionPrompt({ projectName: projectName || "this project", completionLikelihood: optimisation?.completionLikelihood, plannedDays: optimisation?.metrics.plannedDays, expectedTotal: optimisation?.metrics.expectedTotal, varianceTotal: optimisation?.metrics.varianceTotal, selectedStage }, suggestion.label));
-              }}
+              key={`${card.title}-${index}`}
+              label={`Stage ${index + 1}`}
+              title={card.bullets[0] || card.title}
+              onOptimise={() => void optimiseImprovementCard(index, card.bullets[0] || card.title)}
+              resultText={card.solution}
+              isLoading={card.loading}
             />
           ))}
         </section>
