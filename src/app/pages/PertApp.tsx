@@ -4,6 +4,7 @@ import { HTML5Backend } from "react-dnd-html5-backend";
 import { ArrowLeft, BarChart3, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { createProject, createTask, deleteProject, deleteTask, listProjects, listTasks, Project, Task, updateProject, updateTask } from "../api";
+import { formatDateLabel, getProjectTimeline, statusClasses } from "../projectStatus";
 
 interface PertAppProps {
   userEmail: string;
@@ -263,84 +264,28 @@ function TaskTable({ tasks, onDelete, onEdit, onReorder }: { tasks: Task[]; onDe
   );
 }
 
-function formatDateLabel(value?: string | null) {
-  if (!value) return "Not set";
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return "Not set";
-  return parsed.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-}
+function ProjectStatusBadges({ timeline, compact = false }: { timeline: ReturnType<typeof getProjectTimeline>; compact?: boolean }) {
+  const sizeClass = compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-[11px]";
 
-function addDays(dateValue: string, days: number) {
-  const date = new Date(`${dateValue}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function getProjectTimeline(project: Project | null, tasks: Task[]) {
-  if (!project) {
-    return {
-      status: "Not started" as const,
-      plannedDays: null as number | null,
-      estimatedDays: 0,
-      warning: null as string | null,
-      suggestedEndDate: null as string | null,
-      deadlineExceeded: false,
-    };
-  }
-
-  if (tasks.length === 0) {
-    return {
-      status: "Not started" as const,
-      plannedDays: null as number | null,
-      estimatedDays: 0,
-      warning: null as string | null,
-      suggestedEndDate: null as string | null,
-      deadlineExceeded: false,
-    };
-  }
-
-  const estimatedDays = Math.max(1, Math.ceil(tasks.reduce((sum, task) => sum + task.expected, 0)));
-  const startDate = project.startDate;
-  const endDate = project.endDate;
-
-  let plannedDays: number | null = null;
-  if (startDate && endDate) {
-    const start = new Date(`${startDate}T00:00:00`);
-    const end = new Date(`${endDate}T00:00:00`);
-    plannedDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
-  }
-
-  const deadlineExceeded = plannedDays !== null && estimatedDays > plannedDays;
-  const status: "Not started" | "In progress" | "Exceeding timeline" = tasks.length === 0 ? "Not started" : deadlineExceeded ? "Exceeding timeline" : "In progress";
-  const warning = deadlineExceeded && startDate
-    ? `Estimated work is ${estimatedDays} days, which is longer than the planned ${plannedDays}-day window. A better end date would be ${formatDateLabel(addDays(startDate, estimatedDays))}.`
-    : null;
-  const suggestedEndDate = deadlineExceeded && startDate ? addDays(startDate, estimatedDays) : null;
-
-  return {
-    status,
-    plannedDays,
-    estimatedDays,
-    warning,
-    suggestedEndDate,
-    deadlineExceeded,
-  };
-}
-
-function statusClasses(status: "Not started" | "In progress" | "Exceeding timeline") {
-  if (status === "Not started") {
-    return "bg-slate-100 text-slate-700";
-  }
-  if (status === "In progress") {
-    return "bg-emerald-100 text-emerald-700";
-  }
-  return "bg-rose-100 text-rose-700";
+  return (
+    <>
+      {timeline.labels.map((status) => (
+        <span
+          key={status}
+          className={`inline-flex rounded-full ${sizeClass} font-semibold uppercase tracking-wide ${statusClasses(status)}`}
+        >
+          {status}
+        </span>
+      ))}
+    </>
+  );
 }
 
 export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: PertAppProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [projectTasksById, setProjectTasksById] = useState<Record<string, Task[]>>({});
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -372,6 +317,16 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
       try {
         const list = await listProjects();
         setProjects(list);
+        const taskEntries = await Promise.all(
+          list.map(async (project) => {
+            try {
+              return [project.id, await listTasks(project.id)] as const;
+            } catch {
+              return [project.id, []] as const;
+            }
+          })
+        );
+        setProjectTasksById(Object.fromEntries(taskEntries));
         if (list.length > 0) {
           setSelectedProjectId(list[0].id);
         }
@@ -395,6 +350,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
       try {
         const list = await listTasks(selectedProjectId);
         setTasks(list);
+        setProjectTasksById((prev) => ({ ...prev, [selectedProjectId]: list }));
       } catch (error: any) {
         toast.error(error?.message ?? "Unable to load tasks");
       } finally {
@@ -432,6 +388,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
       });
       const updated = [project, ...projects];
       setProjects(updated);
+      setProjectTasksById((prev) => ({ ...prev, [project.id]: [] }));
       setSelectedProjectId(project.id);
       setNewProjectName("");
       setNewProjectStartDate("");
@@ -449,6 +406,11 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
       await deleteProject(projectId);
       const updated = projects.filter((project) => project.id !== projectId);
       setProjects(updated);
+      setProjectTasksById((prev) => {
+        const next = { ...prev };
+        delete next[projectId];
+        return next;
+      });
       if (selectedProjectId === projectId) {
         setSelectedProjectId(updated.length > 0 ? updated[0].id : null);
       }
@@ -478,7 +440,10 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
     }
   };
 
-  const handleTaskAdded = (task: Task) => setTasks((prev) => [...prev, task]);
+  const handleTaskAdded = (task: Task) => {
+    setTasks((prev) => [...prev, task]);
+    setProjectTasksById((prev) => ({ ...prev, [task.projectId]: [...(prev[task.projectId] ?? []), task] }));
+  };
 
   const handleTaskEdited = async (taskId: string, updates: Partial<Task>) => {
     if (!selectedProjectId) return;
@@ -496,7 +461,11 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
         dependencyId: updates.dependencyId,
       });
 
-      setTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, ...updated, expected: updated.expected, stdDev: updated.stdDev, variance: updated.variance } : task)));
+      setTasks((prev) => {
+        const next = prev.map((task) => (task.id === taskId ? { ...task, ...updated, expected: updated.expected, stdDev: updated.stdDev, variance: updated.variance } : task));
+        setProjectTasksById((allTasks) => ({ ...allTasks, [selectedProjectId]: next }));
+        return next;
+      });
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to update stage");
     } finally {
@@ -508,7 +477,11 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
     if (!selectedProjectId) return;
     try {
       await deleteTask(selectedProjectId, taskId);
-      setTasks((prev) => prev.filter((task) => task.id !== taskId));
+      setTasks((prev) => {
+        const next = prev.filter((task) => task.id !== taskId);
+        setProjectTasksById((allTasks) => ({ ...allTasks, [selectedProjectId]: next }));
+        return next;
+      });
       toast.success("Stage removed");
     } catch (error: any) {
       toast.error(error?.message ?? "Unable to delete stage");
@@ -529,6 +502,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
     nextTasks.splice(targetIndex, 0, movedTask);
 
     setTasks(nextTasks);
+    setProjectTasksById((prev) => ({ ...prev, [selectedProjectId]: nextTasks }));
 
     try {
       await Promise.all(nextTasks.map((task, index) => updateTask(selectedProjectId, task.id, { sortOrder: index + 1 })));
@@ -624,38 +598,40 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                 ) : projects.length === 0 ? (
                   <p className="text-sm text-slate-500">No project yet. Create one to begin.</p>
                 ) : (
-                  projects.map((project) => (
-                    <div
-                      key={project.id}
-                      className={`flex items-center justify-between gap-3 rounded-3xl border px-4 py-3 transition ${project.id === selectedProjectId ? "border-slate-900 bg-slate-100" : "border-slate-200 bg-white hover:border-slate-900/40"}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedProjectId(project.id)}
-                        className="text-left"
+                  projects.map((project) => {
+                    const timeline = getProjectTimeline(project, projectTasksById[project.id] ?? []);
+
+                    return (
+                      <div
+                        key={project.id}
+                        className={`flex items-center justify-between gap-3 rounded-3xl border px-4 py-3 transition ${project.id === selectedProjectId ? "border-slate-900 bg-slate-100" : "border-slate-200 bg-white hover:border-slate-900/40"}`}
                       >
-                        <p className="font-semibold text-slate-900">{project.name}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusClasses(getProjectTimeline(project, []).status)}`}>
-                            {getProjectTimeline(project, []).status}
-                          </span>
-                          {(project.startDate || project.endDate) && (
-                            <span className="text-[11px] text-slate-500">
-                              {project.startDate ? formatDateLabel(project.startDate) : "No start date"} → {project.endDate ? formatDateLabel(project.endDate) : "No end date"}
-                            </span>
-                          )}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete project"
-                        onClick={() => handleDeleteProject(project.id)}
-                        className="rounded-full p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProjectId(project.id)}
+                          className="text-left"
+                        >
+                          <p className="font-semibold text-slate-900">{project.name}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <ProjectStatusBadges timeline={timeline} compact />
+                            {(project.startDate || project.endDate) && (
+                              <span className="text-[11px] text-slate-500">
+                                {project.startDate ? formatDateLabel(project.startDate) : "No start date"} → {project.endDate ? formatDateLabel(project.endDate) : "No end date"}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          title="Delete project"
+                          onClick={() => handleDeleteProject(project.id)}
+                          className="rounded-full p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -680,9 +656,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                   </h2>
                   {selectedProject && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${statusClasses(projectTimeline.status)}`}>
-                        {projectTimeline.status}
-                      </span>
+                      <ProjectStatusBadges timeline={projectTimeline} />
                       <span className="text-sm text-slate-500">
                         {selectedProject.startDate ? formatDateLabel(selectedProject.startDate) : "No start date"} → {selectedProject.endDate ? formatDateLabel(selectedProject.endDate) : "No end date"}
                       </span>
@@ -708,7 +682,7 @@ export default function PertApp({ userEmail, onSignOut, onOpenAIOptimisation }: 
                   </div>
                   <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
                     <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Timeline</p>
-                    <p className="mt-3 text-3xl font-semibold text-slate-900">{projectTimeline.status}</p>
+                    <p className="mt-3 text-3xl font-semibold text-slate-900">{projectTimeline.labels.join(" + ")}</p>
                   </div>
                 </div>
 
